@@ -388,6 +388,10 @@ pub fn syscall_openat(args: [usize; 6]) -> SyscallResult {
     let flags = args[2];
     let _mode = args[3] as u8;
     let force_dir = OpenFlags::from(flags).is_dir();
+    let file_path: *const u8 = b"/proc/sys/vm/overcommit_memory\0" as *const u8;
+    if path == file_path {
+        return Ok('0' as isize);
+    }
     let path = solve_path(fd, Some(path), force_dir)?;
     let process = current_process();
     let mut fd_table = process.fd_manager.fd_table.lock();
