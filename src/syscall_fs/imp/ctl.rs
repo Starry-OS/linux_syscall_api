@@ -1,7 +1,7 @@
 //! 对文件系统的管理,包括目录项的创建、文件权限设置等内容
 use axfs::api::{remove_dir, remove_file, rename, OpenFlags, Permissions};
 use axlog::{debug, error, info};
-use core::ptr::copy_nonoverlapping;
+use core::ptr::{self, copy_nonoverlapping};
 
 use crate::{
     syscall_fs::{
@@ -450,9 +450,25 @@ pub fn syscall_ioctl(args: [usize; 6]) -> SyscallResult {
     }
 
     let file = fd_table[fd].clone().unwrap();
-    match file.ioctl(request, argp) {
-        Ok(ret) => Ok(ret),
-        Err(_) => Ok(0),
+    let ptr_argp = argp as *const u32;
+    let nonblock = unsafe { ptr::read(ptr_argp) };
+    pub const FIONBIO: usize = 0x5421;
+    match request {
+        FIONBIO => {
+            if fd == 0 || fd == 1 || fd == 2 {
+                return Ok(0);
+            }
+            if nonblock == 1 {
+                if let Some(flags) = OpenFlags::from_bits(nonblock as u32) {
+                    if file.set_status(flags) {
+                        return Ok(0);
+                    }
+                }
+                return Err(SyscallError::EAGAIN);
+            }
+            Ok(0)
+        }
+        _ => Ok(0),
     }
 }
 
