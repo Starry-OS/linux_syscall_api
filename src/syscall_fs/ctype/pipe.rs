@@ -125,7 +125,6 @@ pub fn make_pipe(flags: OpenFlags) -> (Arc<Pipe>, Arc<Pipe>) {
 
 impl FileIO for Pipe {
     fn read(&self, buf: &mut [u8]) -> AxResult<usize> {
-        info!("kernel: Pipe::read");
         assert!(self.readable());
         let want_to_read = buf.len();
         let mut buf_iter = buf.iter_mut();
@@ -138,11 +137,17 @@ impl FileIO for Pipe {
                 if axprocess::current_process().have_signals().is_some() {
                     return Err(axerrno::AxError::Interrupted);
                 }
-                if Arc::strong_count(&self.buffer) < 2
-                    || ring_buffer.all_write_ends_closed()
-                    || self.is_non_block()
-                {
+                info!(
+                    "kernel: Pipe::read: all_write_ends_closed = {}",
+                    ring_buffer.all_write_ends_closed()
+                );
+                if Arc::strong_count(&self.buffer) < 2 || ring_buffer.all_write_ends_closed() {
                     return Ok(already_read);
+                }
+
+                if self.is_non_block() {
+                    yield_now();
+                    return Err(axerrno::AxError::WouldBlock);
                 }
                 drop(ring_buffer);
                 yield_now();
@@ -264,185 +269,5 @@ impl FileIO for Pipe {
             *self.flags.lock() &= !OpenFlags::CLOEXEC;
         }
         true
-    }
-}
-
-pub struct SocketPair {
-    buffer: Arc<Mutex<SocketPairBuffer>>,
-    non_block: bool,
-    flags: Mutex<OpenFlags>,
-}
-
-impl SocketPair {
-    pub fn new(buffer: Arc<Mutex<SocketPairBuffer>>, non_block: bool) -> Self {
-        Self {
-            buffer,
-            non_block,
-            flags: Mutex::new(OpenFlags::empty()),
-        }
-    }
-}
-
-impl FileIO for SocketPair {
-    fn read(&self, buf: &mut [u8]) -> AxResult<usize> {
-        let want_to_read = buf.len();
-        let mut buf_iter = buf.iter_mut();
-        let mut already_read = 0usize;
-        loop {
-            let mut ring_buffer = self.buffer.lock();
-            let loop_read = ring_buffer.available_read();
-            if loop_read == 0 {
-                if Arc::strong_count(&self.buffer) < 2 || self.non_block {
-                    return Ok(already_read);
-                }
-                drop(ring_buffer);
-                yield_now();
-                continue;
-            }
-            for _ in 0..loop_read {
-                if let Some(byte_ref) = buf_iter.next() {
-                    *byte_ref = ring_buffer.read_byte();
-                    already_read += 1;
-                    if already_read == want_to_read {
-                        return Ok(want_to_read);
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            return Ok(already_read);
-        }
-    }
-
-    fn write(&self, buf: &[u8]) -> AxResult<usize> {
-        let want_to_write = buf.len();
-        let mut buf_iter = buf.iter();
-        let mut already_write = 0usize;
-        loop {
-            let mut ring_buffer = self.buffer.lock();
-            let loop_write = ring_buffer.available_write();
-            if loop_write == 0 {
-                drop(ring_buffer);
-
-                if Arc::strong_count(&self.buffer) < 2 || self.non_block {
-                    // 读入端关闭
-                    return Ok(already_write);
-                }
-                yield_now();
-                continue;
-            }
-
-            // write at most loop_write bytes
-            for _ in 0..loop_write {
-                if let Some(byte_ref) = buf_iter.next() {
-                    ring_buffer.write_byte(*byte_ref);
-                    already_write += 1;
-                    if already_write == want_to_write {
-                        drop(ring_buffer);
-                        return Ok(want_to_write);
-                    }
-                } else {
-                    break;
-                }
-            }
-            return Ok(already_write);
-        }
-    }
-
-    fn readable(&self) -> bool {
-        true
-    }
-
-    fn writable(&self) -> bool {
-        true
-    }
-
-    fn executable(&self) -> bool {
-        false
-    }
-
-    fn get_type(&self) -> axfs::api::FileIOType {
-        axfs::api::FileIOType::Socket
-    }
-
-    fn get_status(&self) -> OpenFlags {
-        *self.flags.lock()
-    }
-
-    fn set_close_on_exec(&self, is_set: bool) -> bool {
-        if is_set {
-            // 设置close_on_exec位置
-            *self.flags.lock() |= OpenFlags::CLOEXEC;
-        } else {
-            *self.flags.lock() &= !OpenFlags::CLOEXEC;
-        }
-        true
-    }
-}
-
-/// return sockerpair read write
-pub fn make_socketpair(non_block: bool) -> (Arc<SocketPair>, Arc<SocketPair>) {
-    let buffer = Arc::new(Mutex::new(SocketPairBuffer::new()));
-    let fd1 = Arc::new(SocketPair::new(buffer.clone(), non_block));
-    let fd2 = Arc::new(SocketPair::new(buffer.clone(), non_block));
-    (fd1, fd2)
-}
-
-#[derive(Copy, Clone, PartialEq)]
-enum SocketPairBufferStatus {
-    Full,
-    Empty,
-    Normal,
-}
-pub struct SocketPairBuffer {
-    arr: [u8; RING_BUFFER_SIZE],
-    head: usize,
-    tail: usize,
-    status: SocketPairBufferStatus,
-}
-
-impl SocketPairBuffer {
-    pub fn new() -> Self {
-        Self {
-            arr: [0; RING_BUFFER_SIZE],
-            head: 0,
-            tail: 0,
-            status: SocketPairBufferStatus::Empty,
-        }
-    }
-
-    pub fn write_byte(&mut self, byte: u8) {
-        self.status = SocketPairBufferStatus::Normal;
-        self.arr[self.tail] = byte;
-        self.tail = (self.tail + 1) % RING_BUFFER_SIZE;
-        if self.tail == self.head {
-            self.status = SocketPairBufferStatus::Full;
-        }
-    }
-    pub fn read_byte(&mut self) -> u8 {
-        self.status = SocketPairBufferStatus::Normal;
-        let c = self.arr[self.head];
-        self.head = (self.head + 1) % RING_BUFFER_SIZE;
-        if self.head == self.tail {
-            self.status = SocketPairBufferStatus::Empty;
-        }
-        c
-    }
-    pub fn available_read(&self) -> usize {
-        if self.status == SocketPairBufferStatus::Empty {
-            0
-        } else if self.tail > self.head {
-            self.tail - self.head
-        } else {
-            self.tail + RING_BUFFER_SIZE - self.head
-        }
-    }
-    pub fn available_write(&self) -> usize {
-        if self.status == SocketPairBufferStatus::Full {
-            0
-        } else {
-            RING_BUFFER_SIZE - self.available_read()
-        }
     }
 }
