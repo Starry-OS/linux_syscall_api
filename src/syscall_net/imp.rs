@@ -5,7 +5,7 @@ use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 use alloc::sync::Arc;
 
-use crate::{syscall_fs::ctype::pipe::make_socketpair, SyscallError, SyscallResult};
+use crate::{SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
 use axnet::{into_core_sockaddr, IpAddr, SocketAddr};
@@ -396,6 +396,7 @@ pub fn syscall_sendto(args: [usize; 6]) -> SyscallResult {
             Ok(len as isize)
         }
         Err(AxError::Interrupted) => Err(SyscallError::EINTR),
+        Err(AxError::Again) | Err(AxError::WouldBlock) => Err(SyscallError::EAGAIN),
         Err(e) => {
             error!("[sendto()] socket {fd} send error: {e:?}");
             Err(SyscallError::EPERM)
@@ -652,14 +653,20 @@ pub fn syscall_shutdown(args: [usize; 6]) -> SyscallResult {
 pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     let fd: *mut u32 = args[3] as *mut u32;
     let s_type = args[1];
-
+    let domain = args[0];
     let process = current_process();
     if process.manual_alloc_for_lazy((fd as usize).into()).is_err() {
         return Err(SyscallError::EINVAL);
     }
+    if domain != Domain::AF_UNIX as usize {
+        panic!();
+    }
+    if SocketType::try_from(s_type & SOCKET_TYPE_MASK).is_err() {
+        // return ErrorNo::EINVAL as isize;
+        return Err(SyscallError::EINVAL);
+    };
 
-    let non_block = (s_type & 0x800) != 0;
-    let (fd1, fd2) = make_socketpair(non_block);
+    let (fd1, fd2) = make_socketpair(s_type);
     let mut fd_table = process.fd_manager.fd_table.lock();
     let fd_num = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
@@ -673,7 +680,7 @@ pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     } else {
         return Err(SyscallError::EPERM);
     };
-    axlog::debug!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
+    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
     fd_table[fd_num2] = Some(fd2);
 
     unsafe {
@@ -682,6 +689,4 @@ pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     }
 
     Ok(0)
-    // syscall_fs::imp::syscall_pipe2([args[3], args[1], 0, 0, 0, 0])
-    // Err(SyscallError::EAFNOSUPPORT)
 }

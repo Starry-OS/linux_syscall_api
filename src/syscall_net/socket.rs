@@ -1,7 +1,8 @@
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::{
     mem::size_of,
+    net::Ipv4Addr,
     ptr::copy_nonoverlapping,
     sync::atomic::{AtomicBool, AtomicU64},
 };
@@ -18,11 +19,14 @@ use axnet::{
 use axsync::Mutex;
 use num_enum::TryFromPrimitive;
 
-use crate::{LibcSocketAddr, SyscallError, SyscallResult, TimeVal};
+use crate::{
+    syscall_fs::ctype::pipe::{make_pipe, Pipe},
+    LibcSocketAddr, SyscallError, SyscallResult, TimeVal,
+};
 
 pub const SOCKET_TYPE_MASK: usize = 0xFF;
 
-#[derive(TryFromPrimitive, Clone)]
+#[derive(TryFromPrimitive, Clone, PartialEq, Eq)]
 #[repr(usize)]
 #[allow(non_camel_case_types)]
 pub enum Domain {
@@ -30,7 +34,7 @@ pub enum Domain {
     AF_INET = 2,
 }
 
-#[derive(TryFromPrimitive, PartialEq, Eq, Clone, Debug)]
+#[derive(TryFromPrimitive, PartialEq, Eq, Copy, Clone, Debug)]
 #[repr(usize)]
 #[allow(non_camel_case_types)]
 pub enum SocketType {
@@ -428,6 +432,9 @@ pub struct Socket {
     pub close_exec: bool,
     recv_timeout: Mutex<Option<TimeVal>>,
 
+    /// FIXME: temp for socket pair
+    pub buffer: Option<Arc<Pipe>>,
+
     // fake options
     dont_route: bool,
     send_buf_size: AtomicU64,
@@ -509,6 +516,7 @@ impl Socket {
             socket_type,
             inner: Mutex::new(inner),
             close_exec: false,
+            buffer: None,
             recv_timeout: Mutex::new(None),
             dont_route: false,
             send_buf_size: AtomicU64::new(64 * 1024),
@@ -612,6 +620,7 @@ impl Socket {
                 socket_type: self.socket_type.clone(),
                 inner: Mutex::new(SocketInner::Tcp(new_socket)),
                 close_exec: false,
+                buffer: None,
                 recv_timeout: Mutex::new(None),
                 dont_route: false,
                 send_buf_size: AtomicU64::new(64 * 1024),
@@ -643,6 +652,9 @@ impl Socket {
     #[allow(unused)]
     /// let the socket send data to the given address
     pub fn sendto(&self, buf: &[u8], addr: SocketAddr) -> AxResult<usize> {
+        if self.domain == Domain::AF_UNIX {
+            return self.buffer.as_ref().unwrap().write(buf);
+        }
         let inner = self.inner.lock();
         match &*inner {
             SocketInner::Tcp(s) => s.send(buf),
@@ -652,6 +664,13 @@ impl Socket {
 
     /// let the socket receive data and write it to the given buffer
     pub fn recv_from(&self, buf: &mut [u8]) -> AxResult<(usize, SocketAddr)> {
+        if self.domain == Domain::AF_UNIX {
+            let ans = self.buffer.as_ref().unwrap().read(buf)?;
+            return Ok((
+                ans,
+                SocketAddr::new(IpAddr::Ipv4(axnet::Ipv4Addr::new(127, 0, 0, 1)), 0),
+            ));
+        }
         let inner = self.inner.lock();
         match &*inner {
             SocketInner::Tcp(s) => {
@@ -705,6 +724,9 @@ impl Socket {
 
 impl FileIO for Socket {
     fn read(&self, buf: &mut [u8]) -> AxResult<usize> {
+        if self.domain == Domain::AF_UNIX {
+            return self.buffer.as_ref().unwrap().read(buf);
+        }
         let mut inner = self.inner.lock();
         match &mut *inner {
             SocketInner::Tcp(s) => s.read(buf),
@@ -713,6 +735,9 @@ impl FileIO for Socket {
     }
 
     fn write(&self, buf: &[u8]) -> AxResult<usize> {
+        if self.domain == Domain::AF_UNIX {
+            return self.buffer.as_ref().unwrap().write(buf);
+        }
         let mut inner = self.inner.lock();
         match &mut *inner {
             SocketInner::Tcp(s) => s.write(buf),
@@ -725,6 +750,9 @@ impl FileIO for Socket {
     }
 
     fn readable(&self) -> bool {
+        if self.domain == Domain::AF_UNIX {
+            return self.buffer.as_ref().unwrap().readable();
+        }
         poll_interfaces();
         let inner = self.inner.lock();
         match &*inner {
@@ -734,6 +762,9 @@ impl FileIO for Socket {
     }
 
     fn writable(&self) -> bool {
+        if self.domain == Domain::AF_UNIX {
+            return self.buffer.as_ref().unwrap().writable();
+        }
         poll_interfaces();
         let inner = self.inner.lock();
         match &*inner {
@@ -777,6 +808,29 @@ impl FileIO for Socket {
     fn ready_to_write(&self) -> bool {
         self.writable()
     }
+}
+
+/// return sockerpair read write
+pub fn make_socketpair(socket_type: usize) -> (Arc<Socket>, Arc<Socket>) {
+    let s_type = SocketType::try_from(socket_type & SOCKET_TYPE_MASK).unwrap();
+    let mut fd1 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut fd2 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut pipe_flag = OpenFlags::empty();
+    if socket_type & SOCK_NONBLOCK != 0 {
+        pipe_flag |= OpenFlags::NON_BLOCK;
+        fd1.set_nonblocking(true);
+        fd2.set_nonblocking(true);
+    }
+    if socket_type & SOCK_CLOEXEC != 0 {
+        pipe_flag |= OpenFlags::CLOEXEC;
+        fd1.close_exec = true;
+        fd2.close_exec = true;
+        axlog::info!("set close on exec");
+    }
+    let (pipe1, pipe2) = make_pipe(pipe_flag);
+    fd1.buffer = Some(pipe1);
+    fd2.buffer = Some(pipe2);
+    (Arc::new(fd1), Arc::new(fd2))
 }
 
 /// Turn a socket address buffer into a SocketAddr
