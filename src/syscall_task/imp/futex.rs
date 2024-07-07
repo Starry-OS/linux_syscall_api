@@ -81,85 +81,87 @@ pub fn futex(
     val2: usize,
     _val3: u32,
 ) -> Result<usize, SyscallError> {
-    let flag = FutexFlags::new(futex_op);
+    let flag = FutexFlags::from_bits(futex_op).unwrap();
     let current_task = current_task();
-    match flag {
-        FutexFlags::Wait => {
-            let mut to = false;
-            let deadline = if timeout != 0 {
-                Some(Duration::from_nanos(timeout as u64) + axhal::time::current_time())
-            } else {
-                None
-            };
-            loop {
-                let key = get_futex_key(vaddr, futex_op);
-                let process = current_process();
-                if process.manual_alloc_for_lazy(vaddr).is_ok() {
-                    let real_futex_val =
-                        unsafe { (vaddr.as_usize() as *const u32).read_volatile() };
-                    info!("real val: {:#x}, expected val: {:#x}", real_futex_val, val);
-                    if real_futex_val != val {
-                        return Err(SyscallError::EAGAIN);
-                    }
-                    futex_quque(key, &current_task, val);
 
-                    if let Some(deadline) = deadline {
-                        let now = axhal::time::current_time();
-                        to = deadline < now;
-                    }
-                    if timeout == 0 || !to {
-                        yield_now_task();
-                    }
-                    // If we were woken (and unqueued), we succeeded, whatever.
-                    // TODO: plist_del, not just iterate all the list
-                    if !futex_unqueue(key, &current_task) {
-                        return Ok(0);
-                    }
-                    if to {
-                        return Err(SyscallError::ETIMEDOUT);
-                    }
-                    // we expect signal_pending(current), but we might be the victim
-                    // of a spurious wakeup as well.
+    // // TODO: support bitset wait/wake
+    // if (flag.contains(FutexFlags::WAIT_BITSET) || flag.contains(FutexFlags::WAKE_BITSET))
+    //     && val3 != FUTEX_BITSET_MATCH_ANY
+    // {
+    //     return Err(SyscallError::EINVAL);
+    // }
 
-                    if process.have_signals().is_some() {
-                        // 被信号打断
-                        return Err(SyscallError::EINTR);
-                    }
-                } else {
-                    return Err(SyscallError::EFAULT);
-                }
-            }
-        }
-        FutexFlags::Wake => {
-            let mut ret = 0;
+    if flag.contains(FutexFlags::WAIT) | flag.contains(FutexFlags::WAIT_BITSET) {
+        let mut to = false;
+        let deadline = if timeout != 0 {
+            Some(Duration::from_nanos(timeout as u64) + axhal::time::current_time())
+        } else {
+            None
+        };
+        loop {
             let key = get_futex_key(vaddr, futex_op);
-            // // 当前任务释放了锁，所以不需要再次释放
-            let mut futex_wait_task = FUTEX_WAIT_TASK.lock();
-            if futex_wait_task.contains_key(&key) {
-                let wait_list = futex_wait_task.get_mut(&key).unwrap();
-                // info!("now task: {}", wait_list.len());
-                while let Some((task, _)) = wait_list.pop_front() {
-                    // 唤醒一个正在等待的任务
-                    info!("wake task: {}", task.id().as_u64());
-                    // WAIT_FOR_FUTEX.notify_task(false, &task);
-                    ret += 1;
-                    if ret == val {
-                        break;
-                    }
+            let process = current_process();
+            if process.manual_alloc_for_lazy(vaddr).is_ok() {
+                let real_futex_val = unsafe { (vaddr.as_usize() as *const u32).read_volatile() };
+                // info!("real val: {:#x}, expected val: {:#x}", real_futex_val, val);
+                if real_futex_val != val {
+                    return Err(SyscallError::EAGAIN);
+                }
+                futex_quque(key, &current_task, val);
+
+                if let Some(deadline) = deadline {
+                    let now = axhal::time::current_time();
+                    to = deadline < now;
+                }
+                if timeout == 0 || !to {
+                    yield_now_task();
+                }
+                // If we were woken (and unqueued), we succeeded, whatever.
+                // TODO: plist_del, not just iterate all the list
+                if !futex_unqueue(key, &current_task) {
+                    return Ok(0);
+                }
+                if to {
+                    return Err(SyscallError::ETIMEDOUT);
+                }
+                // we expect signal_pending(current), but we might be the victim
+                // of a spurious wakeup as well.
+
+                if process.have_signals().is_some() {
+                    // 被信号打断
+                    return Err(SyscallError::EINTR);
+                }
+            } else {
+                return Err(SyscallError::EFAULT);
+            }
+        }
+    } else if flag.contains(FutexFlags::WAKE) | flag.contains(FutexFlags::WAKE_BITSET) {
+        let mut ret = 0;
+        let key = get_futex_key(vaddr, futex_op);
+        // // 当前任务释放了锁，所以不需要再次释放
+        let mut futex_wait_task = FUTEX_WAIT_TASK.lock();
+        if futex_wait_task.contains_key(&key) {
+            let wait_list = futex_wait_task.get_mut(&key).unwrap();
+            // info!("now task: {}", wait_list.len());
+            while let Some((task, _)) = wait_list.pop_front() {
+                // 唤醒一个正在等待的任务
+                info!("wake task: {}", task.id().as_u64());
+                // WAIT_FOR_FUTEX.notify_task(false, &task);
+                ret += 1;
+                if ret == val {
+                    break;
                 }
             }
-            drop(futex_wait_task);
-            yield_now_task();
-            Ok(ret as usize)
         }
-        FutexFlags::Requeue => {
-            futex_requeue(val, val2, vaddr, vaddr2);
-            Ok(0)
-        }
-        _ => {
-            Err(SyscallError::EINVAL)
-            // return Ok(0);
-        }
+        drop(futex_wait_task);
+        yield_now_task();
+        Ok(ret as usize)
+    } else if flag.contains(FutexFlags::REQUEUE) {
+        futex_requeue(val, val2, vaddr, vaddr2);
+        Ok(0)
+    } else {
+        Err(SyscallError::EINVAL)
+        // return Ok(0);
     }
 }
 
