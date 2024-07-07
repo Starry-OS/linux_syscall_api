@@ -1,7 +1,9 @@
 use crate::{syscall_fs::FileDesc, MMAPFlags, MREMAPFlags, SyscallError, SyscallResult, MMAPPROT};
 extern crate alloc;
 
+use axerrno::AxError;
 use axhal::{arch::flush_tlb, mem::VirtAddr, paging::MappingFlags};
+use axlog::info;
 use axmem::MemorySet;
 
 use axprocess::current_process;
@@ -46,7 +48,6 @@ pub fn syscall_mmap(args: [usize; 6]) -> SyscallResult {
     let flags = MMAPFlags::from_bits_truncate(args[3] as u32);
     let fd = args[4] as i32;
     let offset = args[5];
-    use axlog::debug;
     use axmem::MemBackend;
     axlog::info!("flags: {:?}", flags);
     let fixed = flags.contains(MMAPFlags::MAP_FIXED);
@@ -57,7 +58,7 @@ pub fn syscall_mmap(args: [usize; 6]) -> SyscallResult {
 
     let process = current_process();
     let shared = flags.contains(MMAPFlags::MAP_SHARED);
-    let addr = if flags.contains(MMAPFlags::MAP_ANONYMOUS) {
+    let result = if flags.contains(MMAPFlags::MAP_ANONYMOUS) {
         // no file
         if offset != 0 {
             return Err(SyscallError::EINVAL);
@@ -69,7 +70,7 @@ pub fn syscall_mmap(args: [usize; 6]) -> SyscallResult {
             .mmap(start.into(), len, prot.into(), shared, fixed, None)
     } else {
         // file backend
-        debug!("[mmap] fd: {}, offset: 0x{:x}", fd, offset);
+        axlog::debug!("[mmap] fd: {}, offset: 0x{:x}", fd, offset);
         if fd >= process.fd_manager.fd_table.lock().len() as i32 || fd < 0 {
             return Err(SyscallError::EINVAL);
         }
@@ -99,9 +100,12 @@ pub fn syscall_mmap(args: [usize; 6]) -> SyscallResult {
     };
 
     flush_tlb(None);
-    debug!("mmap: 0x{:x}", addr);
     // info!("val: {}", unsafe { *(addr as *const usize) });
-    Ok(addr)
+    match result {
+        Ok(addr) => Ok(addr as isize),
+        Err(AxError::NoMemory) => Err(SyscallError::ENOMEM),
+        Err(_) => Err(SyscallError::EINVAL),
+    }
 }
 
 /// # Arguments
