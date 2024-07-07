@@ -215,6 +215,25 @@ pub fn syscall_tkill(args: [usize; 6]) -> SyscallResult {
     }
 }
 
+/// 向tid指定的线程组发送信号
+pub fn syscall_tgkill(args: [usize; 6]) -> SyscallResult {
+    let tgid = args[0] as isize;
+    let tid = args[1] as isize;
+    let signum = args[2] as isize;
+    debug!(
+        "cpu: {}, send singal: {} to: {}",
+        this_cpu_id(),
+        signum,
+        tid
+    );
+    if tgid > 0 && tid > 0 && signum > 0 {
+        let _ = axprocess::signal::send_signal_to_thread(tid, signum);
+        Ok(0)
+    } else {
+        Err(SyscallError::EINVAL)
+    }
+}
+
 /// Set and get the alternate signal stack
 pub fn syscall_sigaltstack(args: [usize; 6]) -> SyscallResult {
     let current_process = current_process();
