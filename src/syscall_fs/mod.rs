@@ -71,6 +71,7 @@ pub fn fs_syscall(syscall_id: fs_syscall_id::FsSyscallId, args: [usize; 6]) -> S
         PPOLL => syscall_ppoll(args),
         PSELECT6 => syscall_pselect6(args),
         STATX => syscall_statx(args),
+        PIDFD_OPEN => syscall_pidfd_open(args),
         #[cfg(not(target_arch = "x86_64"))]
         EVENTFD => syscall_eventfd(args),
         #[cfg(target_arch = "x86_64")]

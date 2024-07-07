@@ -246,12 +246,8 @@ impl FileIO for Pipe {
 
     /// 设置文件状态
     fn set_status(&self, flags: OpenFlags) -> bool {
-        if flags.contains(OpenFlags::CLOEXEC) {
-            *self.flags.lock() = flags;
-            true
-        } else {
-            false
-        }
+        *self.flags.lock() = flags;
+        true
     }
 
     /// 获取文件状态

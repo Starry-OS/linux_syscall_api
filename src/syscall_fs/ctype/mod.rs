@@ -11,3 +11,5 @@ pub use file::FileDesc;
 pub mod epoll;
 
 pub mod eventfd;
+
+pub mod pidfd;

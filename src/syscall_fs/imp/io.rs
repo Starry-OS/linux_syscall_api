@@ -142,9 +142,6 @@ pub fn syscall_write(args: [usize; 6]) -> SyscallResult {
             // 3. regular file
             return Err(SyscallError::EBADF);
         }
-
-        #[cfg(not(feature = "net"))]
-        return Err(SyscallError::EBADF);
     }
 
     // for sockets:
