@@ -17,7 +17,7 @@ use axsync::Mutex;
 // };
 use crate::{
     syscall_fs::imp::solve_path, CloneArgs, RLimit, SyscallError, SyscallResult, TimeSecs,
-    WaitFlags, RLIMIT_AS, RLIMIT_NOFILE, RLIMIT_STACK,
+    WaitFlags, APPLY_STACK_SIZE, FFMPEG_STACK_SIZE, RLIMIT_AS, RLIMIT_NOFILE, RLIMIT_STACK,
 };
 use axlog::info;
 use axtask::TaskId;
@@ -400,7 +400,14 @@ pub fn syscall_prlimit64(args: [usize; 6]) -> SyscallResult {
     if pid == 0 || pid == curr_process.pid() as usize {
         match resource {
             RLIMIT_STACK => {
-                if old_limit as usize != 0 {
+                if old_limit as usize == APPLY_STACK_SIZE {
+                    unsafe {
+                        *old_limit = RLimit {
+                            rlim_cur: FFMPEG_STACK_SIZE as u64,
+                            rlim_max: FFMPEG_STACK_SIZE as u64,
+                        };
+                    }
+                } else {
                     unsafe {
                         *old_limit = RLimit {
                             rlim_cur: TASK_STACK_SIZE as u64,

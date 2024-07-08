@@ -272,6 +272,10 @@ pub const RLIMIT_STACK: i32 = 3;
 pub const RLIMIT_NOFILE: i32 = 7;
 /// 用户地址空间的最大大小
 pub const RLIMIT_AS: i32 = 9;
+/// 申请使用的栈大小
+pub const APPLY_STACK_SIZE: usize = 0x3ffff830;
+/// ffmpeg 使用的栈大小
+pub const FFMPEG_STACK_SIZE: usize = 0x800000;
 
 /// robust list
 #[repr(C)]
