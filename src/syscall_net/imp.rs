@@ -4,11 +4,12 @@ use super::socket::*;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 use alloc::sync::Arc;
+use axfs::api::FileIO;
 
-use crate::{syscall_fs::ctype::pipe::make_socketpair, SyscallError, SyscallResult};
+use crate::{SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
-use axnet::{into_core_sockaddr, IpAddr, SocketAddr};
+
 use axprocess::current_process;
 use num_enum::TryFromPrimitive;
 
@@ -31,13 +32,9 @@ pub fn syscall_socket(args: [usize; 6]) -> SyscallResult {
         // return ErrorNo::EINVAL as isize;
         return Err(SyscallError::EINVAL);
     };
-    let mut socket = Socket::new(domain, socket_type);
-    if s_type & SOCK_NONBLOCK != 0 {
-        socket.set_nonblocking(true)
-    }
-    if s_type & SOCK_CLOEXEC != 0 {
-        socket.close_exec = true;
-    }
+    let socket = Socket::new(domain, socket_type);
+    socket.set_nonblocking((s_type & SOCK_NONBLOCK) != 0);
+    socket.set_close_on_exec((s_type & SOCK_CLOEXEC) != 0);
     let curr = current_process();
     let mut fd_table = curr.fd_manager.fd_table.lock();
     let Ok(fd) = curr.alloc_fd(&mut fd_table) else {
@@ -135,7 +132,7 @@ pub fn syscall_accept4(args: [usize; 6]) -> SyscallResult {
         return Err(SyscallError::EFAULT);
     }
     match socket.accept() {
-        Ok((mut s, addr)) => {
+        Ok((s, addr)) => {
             let _ = unsafe { socket_address_to(addr, addr_buf, buf_len, addr_len) };
 
             let mut fd_table = curr.fd_manager.fd_table.lock();
@@ -146,12 +143,10 @@ pub fn syscall_accept4(args: [usize; 6]) -> SyscallResult {
             debug!("[accept()] socket {fd} accept new socket {new_fd} {addr:?}");
 
             // handle flags
-            if flags & SOCK_NONBLOCK != 0 {
-                s.set_nonblocking(true);
-            }
-            if flags & SOCK_CLOEXEC != 0 {
-                s.close_exec = true;
-            }
+
+            s.set_nonblocking((flags & SOCK_NONBLOCK) != 0);
+
+            s.set_close_on_exec((flags & SOCK_CLOEXEC) != 0);
 
             fd_table[new_fd] = Some(Arc::new(s));
             Ok(new_fd as isize)
@@ -355,47 +350,15 @@ pub fn syscall_sendto(args: [usize; 6]) -> SyscallResult {
     } else {
         None
     };
-    info!("[sendto()] socket {fd} send {len} bytes to addr {:?}", addr);
-    let inner = socket.inner.lock();
-    let send_result = match &*inner {
-        SocketInner::Udp(s) => {
-            // udp socket not bound
-            if s.local_addr().is_err() {
-                s.bind(into_core_sockaddr(SocketAddr::new(
-                    IpAddr::v4(0, 0, 0, 0),
-                    0,
-                )))
-                .unwrap();
-            }
-            match addr {
-                Some(addr) => s.send_to(buf, into_core_sockaddr(addr)),
-                None => {
-                    // not connected and no target is given
-                    if s.peer_addr().is_err() {
-                        return Err(SyscallError::ENOTCONN);
-                    }
-                    s.send(buf)
-                }
-            }
-        }
-        SocketInner::Tcp(s) => {
-            if s.is_closed() {
-                // The local socket has been closed.
-                return Err(SyscallError::EPIPE);
-            }
-            // if !s.is_connected() {
-            //     return Err(SyscallError::ENOTCONN);
-            // }
-            s.send(buf)
-        }
-    };
-
-    match send_result {
+    match socket.sendto(buf, addr) {
         Ok(len) => {
             info!("[sendto()] socket {fd} sent {len} bytes to addr {:?}", addr);
             Ok(len as isize)
         }
         Err(AxError::Interrupted) => Err(SyscallError::EINTR),
+        Err(AxError::Again) | Err(AxError::WouldBlock) => Err(SyscallError::EAGAIN),
+        Err(AxError::NotConnected) => Err(SyscallError::ENOTCONN),
+        Err(AxError::ConnectionReset) => Err(SyscallError::EPIPE),
         Err(e) => {
             error!("[sendto()] socket {fd} send error: {e:?}");
             Err(SyscallError::EPERM)
@@ -463,7 +426,8 @@ pub fn syscall_recvfrom(args: [usize; 6]) -> SyscallResult {
                 Ok(len as isize)
             }
         }
-        Err(AxError::ConnectionRefused) => Ok(0),
+        Err(AxError::NotConnected) => Err(SyscallError::ENOTCONN),
+        Err(AxError::ConnectionRefused) => Err(SyscallError::ECONNREFUSED),
         Err(AxError::Interrupted) => Err(SyscallError::EINTR),
         Err(AxError::Timeout) | Err(AxError::WouldBlock) => Err(SyscallError::EAGAIN),
         Err(_) => Err(SyscallError::EPERM),
@@ -652,14 +616,20 @@ pub fn syscall_shutdown(args: [usize; 6]) -> SyscallResult {
 pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     let fd: *mut u32 = args[3] as *mut u32;
     let s_type = args[1];
-
+    let domain = args[0];
     let process = current_process();
     if process.manual_alloc_for_lazy((fd as usize).into()).is_err() {
         return Err(SyscallError::EINVAL);
     }
+    if domain != Domain::AF_UNIX as usize {
+        panic!();
+    }
+    if SocketType::try_from(s_type & SOCKET_TYPE_MASK).is_err() {
+        // return ErrorNo::EINVAL as isize;
+        return Err(SyscallError::EINVAL);
+    };
 
-    let non_block = (s_type & 0x800) != 0;
-    let (fd1, fd2) = make_socketpair(non_block);
+    let (fd1, fd2) = make_socketpair(s_type);
     let mut fd_table = process.fd_manager.fd_table.lock();
     let fd_num = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
@@ -673,7 +643,7 @@ pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     } else {
         return Err(SyscallError::EPERM);
     };
-    axlog::debug!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
+    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
     fd_table[fd_num2] = Some(fd2);
 
     unsafe {
@@ -682,6 +652,4 @@ pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     }
 
     Ok(0)
-    // syscall_fs::imp::syscall_pipe2([args[3], args[1], 0, 0, 0, 0])
-    // Err(SyscallError::EAFNOSUPPORT)
 }

@@ -58,6 +58,7 @@ pub enum FsSyscallId {
     RENAMEAT2 = 276,
     COPYFILERANGE = 285,
     STATX = 291,
+    PIDFD_OPEN = 434,
 }
 }
 
@@ -133,5 +134,6 @@ numeric_enum_macro::numeric_enum! {
         STATX = 332,
         CHOWN = 92,
         MKNOD = 259,
+        PIDFD_OPEN = 434,
     }
 }

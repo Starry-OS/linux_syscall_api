@@ -21,7 +21,7 @@ pub fn syscall_fstat(args: [usize; 6]) -> SyscallResult {
     let process = current_process();
     let fd_table = process.fd_manager.fd_table.lock();
 
-    if fd >= fd_table.len() || fd < 3 {
+    if fd >= fd_table.len() {
         debug!("fd {} is out of range", fd);
         return Err(SyscallError::EPERM);
     }

@@ -37,7 +37,7 @@ pub fn task_syscall(syscall_id: task_syscall_id::TaskSyscallId, args: [usize; 6]
 
         TKILL => syscall_tkill(args),
 
-        TGKILL => syscall_tkill(args),
+        TGKILL => syscall_tgkill(args),
 
         SIGPROCMASK => syscall_sigprocmask(args),
         SIGALTSTACK => syscall_sigaltstack(args),

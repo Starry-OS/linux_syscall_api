@@ -289,27 +289,27 @@ pub struct IoVec {
     /// length of the buffer
     pub len: usize,
 }
-/// 对 futex 的操作
-pub enum FutexFlags {
-    /// 检查用户地址 uaddr 处的值。如果不是要求的值则等待 wake
-    Wait,
-    /// 唤醒最多 val 个在等待 uaddr 位置的线程。
-    Wake,
-    /// 将等待 uaddr 的线程移动到 uaddr2
-    Requeue,
-    /// 不支持的操作
-    Unsupported,
-}
 
-impl FutexFlags {
-    /// Create a FutexFlags from a i32 value
-    pub fn new(val: i32) -> Self {
-        match val & 0x7f {
-            0 => FutexFlags::Wait,
-            1 => FutexFlags::Wake,
-            3 => FutexFlags::Requeue,
-            _ => FutexFlags::Unsupported,
-        }
+/// mask for futex_bitset, which means match any bit
+#[allow(unused)]
+pub(crate) const FUTEX_BITSET_MATCH_ANY: u32 = 0xffffffff;
+
+bitflags::bitflags! {
+    /// 对 futex 的操作
+    #[derive(PartialEq, Eq)]
+    pub struct FutexFlags: i32 {
+        /// 检查用户地址 uaddr 处的值。如果不是要求的值则等待 wake
+        const WAIT = 0;
+        /// 唤醒最多 val 个在等待 uaddr 位置的线程。
+        const WAKE = 1;
+        /// 将等待 uaddr 的线程移动到 uaddr2
+        const REQUEUE = 3;
+        /// WAIT_BITSET
+        const WAIT_BITSET = 9;
+        /// WAKT_BITSET
+        const WAKE_BITSET = 10;
+        /// FUTEX_PRIVATE_FLAG
+        const FUTEX_PRIVATE_FLAG = 128;
     }
 }
 

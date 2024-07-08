@@ -5,7 +5,7 @@ use core::ptr::{self, copy_nonoverlapping};
 
 use crate::{
     syscall_fs::{
-        ctype::{file::new_fd, FileDesc},
+        ctype::{file::new_fd, pidfd::PidFd, FileDesc},
         solve_path,
     },
     DirEnt, DirEntType, Fcntl64Cmd, RenameFlags, SyscallError, SyscallResult, TimeSecs,
@@ -14,10 +14,11 @@ use axhal::mem::VirtAddr;
 use axprocess::{
     current_process,
     link::{FilePath, AT_FDCWD},
+    PID2PC,
 };
 
 extern crate alloc;
-use alloc::string::ToString;
+use alloc::{string::ToString, sync::Arc};
 
 /// 功能:获取当前工作目录；
 /// # Arguments
@@ -391,12 +392,10 @@ pub fn syscall_fcntl64(args: [usize; 6]) -> SyscallResult {
         Ok(Fcntl64Cmd::F_GETFL) => Ok(file.get_status().bits() as isize),
         Ok(Fcntl64Cmd::F_SETFL) => {
             // FIXME: Unimplemented
-            Ok(0)
-            // if let Some(flags) = OpenFlags::from_bits(arg as u32) {
-            //     if file.set_status(flags) {
-            //         return Ok(0);
-            //     }
-            // }
+            if let Some(flags) = OpenFlags::from_bits(arg as u32) {
+                let _ = file.set_status(flags);
+            }
+            return Ok(0);
             // error!("OpenFlags::from_bits");
             // Err(SyscallError::EINVAL)
         }
@@ -518,7 +517,7 @@ pub fn syscall_faccessat(args: [usize; 6]) -> SyscallResult {
     // todo: 有问题,实际上需要考虑当前进程对应的用户UID和文件拥有者之间的关系
     // 现在一律当作root用户处理
     let file_path = solve_path(dir_fd, Some(path), false)?;
-    axlog::error!("syscall_faccessat file_path : {:?}", file_path);
+    axlog::info!("syscall_faccessat file_path : {:?}", file_path);
     axfs::api::metadata(file_path.path())
         .map(|metadata| {
             if mode == 0 {
@@ -652,4 +651,27 @@ pub fn syscall_utimensat(args: [usize; 6]) -> SyscallResult {
         file.stat.lock().mtime.set_as_utime(&new_mtime);
         Ok(0)
     }
+}
+
+/// To open a file descriptor that refers to the PID directory of the given process
+pub fn syscall_pidfd_open(args: [usize; 6]) -> SyscallResult {
+    let pid = args[0] as u32;
+    let flags = args[1] as u32;
+    let mut open_flags = OpenFlags::from_bits(flags).ok_or(SyscallError::EINVAL)?;
+    // It is set to close the file descriptor on exec
+    open_flags |= OpenFlags::CLOEXEC;
+    let pid2fd = PID2PC.lock();
+
+    let pidfd = pid2fd
+        .get(&(pid as u64))
+        .map(|target_process| PidFd::new(Arc::clone(target_process), open_flags))
+        .ok_or(SyscallError::EINVAL)?;
+    drop(pid2fd);
+    let process = current_process();
+    let mut fd_table = process.fd_manager.fd_table.lock();
+    let fd = process
+        .alloc_fd(&mut fd_table)
+        .map_err(|_| SyscallError::EMFILE)?;
+    fd_table[fd] = Some(Arc::new(pidfd));
+    Ok(fd as isize)
 }
