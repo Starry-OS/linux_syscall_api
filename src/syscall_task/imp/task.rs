@@ -1,7 +1,6 @@
 /// 处理与任务（线程）有关的系统调用
 use core::time::Duration;
-
-use axconfig::TASK_STACK_SIZE;
+use core::sync::atomic::AtomicU64;
 use axhal::time::current_time;
 use axprocess::{
     current_process, current_task, exit_current_task,
@@ -402,10 +401,7 @@ pub fn syscall_prlimit64(args: [usize; 6]) -> SyscallResult {
             RLIMIT_STACK => {
                 if old_limit as usize != 0 {
                     unsafe {
-                        *old_limit = RLimit {
-                            rlim_cur: TASK_STACK_SIZE as u64,
-                            rlim_max: TASK_STACK_SIZE as u64,
-                        };
+                        curr_process.set_stack_limit((*old_limit).rlim_cur);
                     }
                 }
             }
@@ -517,6 +513,7 @@ pub fn syscall_setsid() -> SyscallResult {
     // 新建 process group 并加入
     let new_process = Process::new(
         TaskId::new().as_u64(),
+        AtomicU64::new(axconfig::TASK_STACK_SIZE as u64),
         process.get_parent(),
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
