@@ -23,7 +23,11 @@ use axlog::info;
 use axtask::TaskId;
 extern crate alloc;
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
 use axsignal::signal_no::SignalNo;
 
@@ -612,7 +616,27 @@ pub fn syscall_prctl(args: [usize; 6]) -> SyscallResult {
                 Err(SyscallError::EINVAL)
             }
         }
-        Ok(PrctlOption::PR_SET_NAME) => Ok(0),
+        Ok(PrctlOption::PR_SET_NAME) => {
+            if current_process()
+                .manual_alloc_for_lazy((arg2 as usize).into())
+                .is_ok()
+            {
+                unsafe {
+                    let name = &mut *core::ptr::slice_from_raw_parts_mut(arg2, PR_NAME_SIZE);
+                    let new_name_bytes = name
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .cloned()
+                        .collect::<Vec<u8>>();
+                    let new_name = String::from_utf8(new_name_bytes).unwrap_or_default();
+                    // Set the new process name
+                    current_task().set_name(&new_name);
+                }
+                Ok(0)
+            } else {
+                Err(SyscallError::EINVAL)
+            }
+        }
         _ => Ok(0),
     }
 }
