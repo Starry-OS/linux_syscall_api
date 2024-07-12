@@ -391,13 +391,12 @@ pub fn syscall_fcntl64(args: [usize; 6]) -> SyscallResult {
         }
         Ok(Fcntl64Cmd::F_GETFL) => Ok(file.get_status().bits() as isize),
         Ok(Fcntl64Cmd::F_SETFL) => {
-            // FIXME: Unimplemented
             if let Some(flags) = OpenFlags::from_bits(arg as u32) {
                 let _ = file.set_status(flags);
+                Ok(0)
+            } else {
+                Err(SyscallError::EINVAL)
             }
-            return Ok(0);
-            // error!("OpenFlags::from_bits");
-            // Err(SyscallError::EINVAL)
         }
         Ok(Fcntl64Cmd::F_DUPFD_CLOEXEC) => {
             let new_fd = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
