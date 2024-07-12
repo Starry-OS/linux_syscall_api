@@ -32,6 +32,7 @@ pub const SOCKET_TYPE_MASK: usize = 0xFF;
 pub enum Domain {
     AF_UNIX = 1,
     AF_INET = 2,
+    AF_INET6 = 10,
 }
 
 #[derive(TryFromPrimitive, PartialEq, Eq, Copy, Clone, Debug)]
@@ -69,6 +70,7 @@ pub enum SocketOptionLevel {
     IP = 0,
     Socket = 1,
     Tcp = 6,
+    IPv6 = 41,
 }
 
 #[derive(TryFromPrimitive, Debug)]
@@ -103,6 +105,19 @@ pub enum TcpSocketOption {
     TCP_MAXSEG = 2,
     TCP_INFO = 11,
     TCP_CONGESTION = 13,
+}
+
+#[derive(TryFromPrimitive, Debug)]
+#[repr(usize)]
+#[allow(non_camel_case_types)]
+pub enum Ipv6Option {
+    UNICAST_HOPS = 4,
+    MULTICAST_IF = 9,
+    MULTICAST_HOPS = 10,
+    IPV6_ONLY = 27,
+    PACKET_INFO = 61,
+    RECV_TRAFFIC_CLASS = 66,
+    TRAFFIC_CLASS = 67,
 }
 
 impl IpOption {
@@ -405,6 +420,15 @@ impl TcpSocketOption {
                     *opt_len = bytes.len() as u32;
                 };
             }
+        }
+    }
+}
+
+// TODO: achieve the real implementation of Ipv6Option
+impl Ipv6Option {
+    pub fn set(&self, socket: &Socket, opt: &[u8]) -> SyscallResult {
+        match self {
+            _ => Ok(0),
         }
     }
 }
@@ -850,6 +874,18 @@ pub unsafe fn socket_address_from(addr: *const u8, socket: &Socket) -> SocketAdd
 
             let addr = IpAddr::v4(a[0], a[1], a[2], a[3]);
             SocketAddr { addr, port }
+        }
+        Domain::AF_INET6 => {
+            let port = u16::from_be(*addr.add(1));
+            let mut seg = [0u16; 8];
+            // Read the 8 segments of the IPv6 address
+            for i in 0..8 {
+                seg[i] = *addr.add(2 + i);
+            }
+            let addr = axnet::IpAddr::v6(
+                seg[0], seg[1], seg[2], seg[3], seg[4], seg[5], seg[6], seg[7],
+            );
+            SocketAddr::new(addr, port)
         }
     }
 }
