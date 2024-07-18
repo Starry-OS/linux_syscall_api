@@ -1,7 +1,6 @@
 /// 处理与任务（线程）有关的系统调用
 use core::time::Duration;
-
-use axconfig::TASK_STACK_SIZE;
+use core::sync::atomic::AtomicU64;
 use axhal::time::current_time;
 use axprocess::{
     current_process, current_task, exit_current_task,
@@ -22,7 +21,11 @@ use axlog::info;
 use axtask::TaskId;
 extern crate alloc;
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
 use axsignal::signal_no::SignalNo;
 
@@ -395,10 +398,7 @@ pub fn syscall_prlimit64(args: [usize; 6]) -> SyscallResult {
             RLIMIT_STACK => {
                 if old_limit as usize != 0 {
                     unsafe {
-                        *old_limit = RLimit {
-                            rlim_cur: TASK_STACK_SIZE as u64,
-                            rlim_max: TASK_STACK_SIZE as u64,
-                        };
+                        curr_process.set_stack_limit((*old_limit).rlim_cur);
                     }
                 }
             }
@@ -510,6 +510,7 @@ pub fn syscall_setsid() -> SyscallResult {
     // 新建 process group 并加入
     let new_process = Process::new(
         TaskId::new().as_u64(),
+        AtomicU64::new(axconfig::TASK_STACK_SIZE as u64),
         process.get_parent(),
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
@@ -609,7 +610,27 @@ pub fn syscall_prctl(args: [usize; 6]) -> SyscallResult {
                 Err(SyscallError::EINVAL)
             }
         }
-        Ok(PrctlOption::PR_SET_NAME) => Ok(0),
+        Ok(PrctlOption::PR_SET_NAME) => {
+            if current_process()
+                .manual_alloc_for_lazy((arg2 as usize).into())
+                .is_ok()
+            {
+                unsafe {
+                    let name = &mut *core::ptr::slice_from_raw_parts_mut(arg2, PR_NAME_SIZE);
+                    let new_name_bytes = name
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .cloned()
+                        .collect::<Vec<u8>>();
+                    let new_name = String::from_utf8(new_name_bytes).unwrap_or_default();
+                    // Set the new process name
+                    current_task().set_name(&new_name);
+                }
+                Ok(0)
+            } else {
+                Err(SyscallError::EINVAL)
+            }
+        }
         _ => Ok(0),
     }
 }
