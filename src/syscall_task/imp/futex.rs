@@ -13,10 +13,8 @@ use axprocess::{
 use crate::{RobustList, SyscallError, SyscallResult, TimeSecs};
 
 
-use axfutex::{flags::{
-    futex_op_to_flag, FLAGS_CLOCKRT, FLAGS_SHARED, FUTEX_BITSET_MATCH_ANY, FUTEX_CMD_MASK, FUTEX_CMP_REQUEUE, FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET, FUTEX_WAKE_OP
-}, waitwake::{futex_wait, futex_wake, futex_wake_bitset, futex_requeue},
-};
+use axfutex::flags::*;
+use axprocess::futex::{futex_wait, futex_wake, futex_wake_bitset, futex_requeue};
 
 pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
     let uaddr = args[0];
@@ -55,29 +53,28 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
             val3 = FUTEX_BITSET_MATCH_ANY;
             // convert relative timeout to absolute timeout
             let deadline: Option<Duration> = if timeout != 0 {
+                Some(Duration::from_nanos(timeout as u64) + axhal::time::current_time())
+            } else {
+                None
+            };
+            futex_wait(uaddr.into(), flags, val, deadline, val3)
+        }
+        FUTEX_WAIT_BITSET => {
+            let deadline: Option<Duration> = if timeout != 0 {
                 Some(Duration::from_nanos(timeout as u64))
             } else {
                 None
             };
-            futex_wait(uaddr.into(), flags, val, deadline, val3)?;
-        }
-        FUTEX_WAIT_BITSET => {
-            // convert absolute timeout to relative timeout
-            let deadline: Option<Duration> = if timeout != 0 {
-                Some(Duration::from_nanos(timeout as u64) - axhal::time::current_time())
-            } else {
-                None
-            };
-            futex_wait(uaddr.into(), flags, val, deadline, val3)?;   
+            futex_wait(uaddr.into(), flags, val, deadline, val3)   
         }
         FUTEX_WAKE => {
-            futex_wake(uaddr.into(), flags, val)?;
+            futex_wake(uaddr.into(), flags, val)
         }
         FUTEX_WAKE_BITSET => {
-            futex_wake_bitset(uaddr.into(), flags, val, val3)?;
+            futex_wake_bitset(uaddr.into(), flags, val, val3)
         }
         FUTEX_REQUEUE => {
-            futex_requeue(uaddr.into(), flags, val, uaddr2.into(), val2 as u32)?;
+            futex_requeue(uaddr.into(), flags, val, uaddr2.into(), val2 as u32)
         }
         FUTEX_CMP_REQUEUE => {
             error!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_CMP_REQUEUE");
@@ -85,7 +82,7 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
         }
         FUTEX_WAKE_OP => {
             // futex_wake(uaddr, flags, uaddr2, val, val2, val3)
-            error!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_WAKE_OP", );
+            error!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_WAKE_OP");
             return Err(SyscallError::ENOSYS);
         }
         // TODO: priority-inheritance futex 
@@ -95,7 +92,6 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
         }
     }
     // success anyway and reach here
-    Ok(0)
 } 
 
 /// 内核只发挥存储的作用
