@@ -1,5 +1,8 @@
 //! 对文件系统的管理,包括目录项的创建、文件权限设置等内容
-use axfs::api::{remove_dir, remove_file, rename, OpenFlags, Permissions, ConsoleWinSize, TIOCGWINSZ, TCGETS, TIOCSPGRP, TIOCGPGRP, FIONBIO, FIOCLEX};
+use axfs::api::{
+    remove_dir, remove_file, rename, ConsoleWinSize, OpenFlags, Permissions, FIOCLEX, FIONBIO,
+    TCGETS, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP,
+};
 use axlog::{debug, error, info};
 use core::ptr::{self, copy_nonoverlapping};
 
@@ -456,9 +459,7 @@ pub fn syscall_ioctl(args: [usize; 6]) -> SyscallResult {
             }
             Ok(0)
         }
-        TCGETS | TIOCSPGRP => {
-            Ok(0)
-        }
+        TCGETS | TIOCSPGRP => Ok(0),
         TIOCGPGRP => {
             unsafe {
                 *(argp as *mut u32) = 0;
@@ -467,13 +468,13 @@ pub fn syscall_ioctl(args: [usize; 6]) -> SyscallResult {
         }
         FIONBIO => {
             let ptr_argp = argp as *const u32;
-                let nonblock = unsafe { ptr::read(ptr_argp) };
-                if nonblock == 1 {
-                    let old_status = file.get_status();
-                    let _ = file.set_status(old_status | OpenFlags::NON_BLOCK);
-                }
-                return Ok(0);
+            let nonblock = unsafe { ptr::read(ptr_argp) };
+            if nonblock == 1 {
+                let old_status = file.get_status();
+                let _ = file.set_status(old_status | OpenFlags::NON_BLOCK);
             }
+            return Ok(0);
+        }
         FIOCLEX => Ok(0),
         _ => Err(SyscallError::EOPNOTSUPP),
     }
