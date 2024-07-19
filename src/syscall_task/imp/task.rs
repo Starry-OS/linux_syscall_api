@@ -1,5 +1,3 @@
-/// 处理与任务（线程）有关的系统调用
-use core::time::Duration;
 use axhal::time::current_time;
 use axprocess::{
     current_process, current_task, exit_current_task,
@@ -9,6 +7,7 @@ use axprocess::{
     set_child_tid, sleep_now_task, wait_pid, yield_now_task, Process, PID2PC,
 };
 use axsync::Mutex;
+use core::time::Duration;
 // use axtask::{
 //     monolithic_task::task::{SchedPolicy, SchedStatus},
 //     AxTaskRef,
