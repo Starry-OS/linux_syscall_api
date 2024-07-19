@@ -1,7 +1,3 @@
-/// 处理与任务（线程）有关的系统调用
-use core::time::Duration;
-
-use axconfig::TASK_STACK_SIZE;
 use axhal::time::current_time;
 use axprocess::{
     current_process, current_task, exit_current_task,
@@ -10,6 +6,7 @@ use axprocess::{
     set_child_tid, sleep_now_task, wait_pid, yield_now_task, Process, PID2PC,
 };
 use axsync::Mutex;
+use core::time::Duration;
 // use axtask::{
 //     monolithic_task::task::{SchedPolicy, SchedStatus},
 //     AxTaskRef,
@@ -22,7 +19,11 @@ use axlog::info;
 use axtask::TaskId;
 extern crate alloc;
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 
 use axsignal::signal_no::SignalNo;
 
@@ -392,13 +393,22 @@ pub fn syscall_prlimit64(args: [usize; 6]) -> SyscallResult {
     let curr_process = current_process();
     if pid == 0 || pid == curr_process.pid() as usize {
         match resource {
+            // TODO: 改变了新创建的任务栈大小，但未实现当前任务的栈扩展
             RLIMIT_STACK => {
+                let mut stack_limit: u64 = curr_process.get_stack_limit();
                 if old_limit as usize != 0 {
                     unsafe {
                         *old_limit = RLimit {
-                            rlim_cur: TASK_STACK_SIZE as u64,
-                            rlim_max: TASK_STACK_SIZE as u64,
+                            rlim_cur: stack_limit,
+                            rlim_max: stack_limit,
                         };
+                    }
+                }
+                if new_limit as usize != 0 {
+                    let new_size = unsafe { (*new_limit).rlim_cur };
+                    if new_size > axconfig::TASK_STACK_SIZE as u64 {
+                        stack_limit = new_size;
+                        curr_process.set_stack_limit(stack_limit);
                     }
                 }
             }
@@ -510,6 +520,7 @@ pub fn syscall_setsid() -> SyscallResult {
     // 新建 process group 并加入
     let new_process = Process::new(
         TaskId::new().as_u64(),
+        process.get_stack_limit(),
         process.get_parent(),
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
@@ -609,7 +620,27 @@ pub fn syscall_prctl(args: [usize; 6]) -> SyscallResult {
                 Err(SyscallError::EINVAL)
             }
         }
-        Ok(PrctlOption::PR_SET_NAME) => Ok(0),
+        Ok(PrctlOption::PR_SET_NAME) => {
+            if current_process()
+                .manual_alloc_for_lazy((arg2 as usize).into())
+                .is_ok()
+            {
+                unsafe {
+                    let name = &mut *core::ptr::slice_from_raw_parts_mut(arg2, PR_NAME_SIZE);
+                    let new_name_bytes = name
+                        .iter()
+                        .take_while(|&&c| c != 0)
+                        .cloned()
+                        .collect::<Vec<u8>>();
+                    let new_name = String::from_utf8(new_name_bytes).unwrap_or_default();
+                    // Set the new process name
+                    current_task().set_name(&new_name);
+                }
+                Ok(0)
+            } else {
+                Err(SyscallError::EINVAL)
+            }
+        }
         _ => Ok(0),
     }
 }

@@ -1,7 +1,10 @@
 //! 对文件系统的管理,包括目录项的创建、文件权限设置等内容
-use axfs::api::{remove_dir, remove_file, rename, OpenFlags, Permissions};
+use axfs::api::{
+    remove_dir, remove_file, rename, ConsoleWinSize, OpenFlags, Permissions, FIOCLEX, FIONBIO,
+    TCGETS, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP,
+};
 use axlog::{debug, error, info};
-use core::ptr::copy_nonoverlapping;
+use core::ptr::{self, copy_nonoverlapping};
 
 use crate::{
     syscall_fs::{
@@ -391,13 +394,12 @@ pub fn syscall_fcntl64(args: [usize; 6]) -> SyscallResult {
         }
         Ok(Fcntl64Cmd::F_GETFL) => Ok(file.get_status().bits() as isize),
         Ok(Fcntl64Cmd::F_SETFL) => {
-            // FIXME: Unimplemented
             if let Some(flags) = OpenFlags::from_bits(arg as u32) {
                 let _ = file.set_status(flags);
+                Ok(0)
+            } else {
+                Err(SyscallError::EINVAL)
             }
-            return Ok(0);
-            // error!("OpenFlags::from_bits");
-            // Err(SyscallError::EINVAL)
         }
         Ok(Fcntl64Cmd::F_DUPFD_CLOEXEC) => {
             let new_fd = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
@@ -449,9 +451,32 @@ pub fn syscall_ioctl(args: [usize; 6]) -> SyscallResult {
     }
 
     let file = fd_table[fd].clone().unwrap();
-    match file.ioctl(request, argp) {
-        Ok(ret) => Ok(ret),
-        Err(_) => Ok(0),
+    match request {
+        TIOCGWINSZ => {
+            let winsize = argp as *mut ConsoleWinSize;
+            unsafe {
+                *winsize = ConsoleWinSize::default();
+            }
+            Ok(0)
+        }
+        TCGETS | TIOCSPGRP => Ok(0),
+        TIOCGPGRP => {
+            unsafe {
+                *(argp as *mut u32) = 0;
+            }
+            Ok(0)
+        }
+        FIONBIO => {
+            let ptr_argp = argp as *const u32;
+            let nonblock = unsafe { ptr::read(ptr_argp) };
+            if nonblock == 1 {
+                let old_status = file.get_status();
+                let _ = file.set_status(old_status | OpenFlags::NON_BLOCK);
+            }
+            return Ok(0);
+        }
+        FIOCLEX => Ok(0),
+        _ => Err(SyscallError::EOPNOTSUPP),
     }
 }
 

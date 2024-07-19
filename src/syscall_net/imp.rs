@@ -490,6 +490,14 @@ pub fn syscall_set_sock_opt(args: [usize; 6]) -> SyscallResult {
 
             option.set(socket, opt)
         }
+        SocketOptionLevel::IPv6 => {
+            let Ok(option) = Ipv6Option::try_from(opt_name) else {
+                warn!("[setsockopt()] option {opt_name} not supported in ipv6 level");
+                return Ok(0);
+            };
+
+            option.set(socket, opt)
+        }
     }
 }
 
@@ -566,6 +574,8 @@ pub fn syscall_get_sock_opt(args: [usize; 6]) -> SyscallResult {
 
             option.get(socket, opt_value, opt_len);
         }
+        // TODO: achieve the real implementation of ipv6
+        SocketOptionLevel::IPv6 => {}
     }
 
     Ok(0)
