@@ -189,6 +189,7 @@ pub fn syscall_clone(args: [usize; 6]) -> SyscallResult {
     }
 
     if let Ok(new_task_id) = curr_process.clone_task(flags, stack, ptid, tls, ctid, sig_child) {
+        info!("[syscall_clone] parent_id: {:?}, child_id: {:?}", current_task().id(), new_task_id);
         Ok(new_task_id as isize)
     } else {
         Err(SyscallError::ENOMEM)
