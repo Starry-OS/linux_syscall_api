@@ -142,13 +142,13 @@ pub fn syscall_statfs(args: [usize; 6]) -> SyscallResult {
 ///
 ///
 pub fn syscall_statx(args: [usize; 6]) -> SyscallResult {
-    axlog::error!("{args:?}");
-
     let dir_fd = args[0];
     let path = args[1] as *const u8;
     let stat = args[4] as *mut FsStatx;
     let file_path = solve_path(dir_fd, Some(path), false)?;
-
+    if !axfs::api::path_exists(file_path.path()) {
+        return Err(SyscallError::ENOENT);
+    }
     if let Ok(p) = FilePath::new("/") {
         if file_path.equal_to(&p) {
             // 目前只支持访问根目录文件系统的信息
