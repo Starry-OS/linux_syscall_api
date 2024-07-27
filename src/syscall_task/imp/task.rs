@@ -593,7 +593,6 @@ pub fn syscall_fork() -> SyscallResult {
 /// # Arguments
 /// * `option` - usize
 /// * `arg2` - *mut u8
-#[cfg(target_arch = "x86_64")]
 pub fn syscall_prctl(args: [usize; 6]) -> SyscallResult {
     use crate::{PrctlOption, PR_NAME_SIZE};
 

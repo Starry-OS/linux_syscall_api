@@ -4,17 +4,13 @@ extern crate alloc;
 
 use core::time::Duration;
 
-use axlog::{error,debug};
-use axprocess::{
-    current_process, current_task, futex::FutexRobustList
-}
-;
+use axlog::{debug, error};
+use axprocess::{current_process, current_task, futex::FutexRobustList};
 
 use crate::{RobustList, SyscallError, SyscallResult, TimeSecs};
 
-
 use axfutex::flags::*;
-use axprocess::futex::{futex_wait, futex_wake, futex_wake_bitset, futex_requeue};
+use axprocess::futex::{futex_requeue, futex_wait, futex_wake, futex_wake_bitset};
 
 pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
     let uaddr = args[0];
@@ -27,8 +23,7 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
 
     let process = current_process();
     // convert `TimeSecs` struct to `timeout` nanoseconds
-    let timeout = if val2 != 0 && process.manual_alloc_for_lazy(val2.into()).is_ok()
-    {
+    let timeout = if val2 != 0 && process.manual_alloc_for_lazy(val2.into()).is_ok() {
         let time_sepc: TimeSecs = unsafe { *(val2 as *const TimeSecs) };
         time_sepc.turn_to_nanos()
     } else {
@@ -36,14 +31,15 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
         0
     };
 
-
     let flags: i32 = futex_op_to_flag(futex_op);
     // cmd determines the operation of futex
     let cmd: i32 = futex_op & FUTEX_CMD_MASK;
-    // TODO: shared futex and real time clock 
+    // TODO: shared futex and real time clock
     // It's Ok for ananonymous mmap to use private futex
     if (flags & FLAGS_SHARED) != 0 {
-        debug!("shared futex is not supported, but it's ok for anonymous mmap to use private futex");
+        debug!(
+            "shared futex is not supported, but it's ok for anonymous mmap to use private futex"
+        );
     }
     if (flags & FLAGS_CLOCKRT) != 0 {
         panic!("FUTEX_CLOCK_REALTIME is not supported");
@@ -65,17 +61,11 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
             } else {
                 None
             };
-            futex_wait(uaddr.into(), flags, val, deadline, val3)   
+            futex_wait(uaddr.into(), flags, val, deadline, val3)
         }
-        FUTEX_WAKE => {
-            futex_wake(uaddr.into(), flags, val)
-        }
-        FUTEX_WAKE_BITSET => {
-            futex_wake_bitset(uaddr.into(), flags, val, val3)
-        }
-        FUTEX_REQUEUE => {
-            futex_requeue(uaddr.into(), flags, val, uaddr2.into(), val2 as u32)
-        }
+        FUTEX_WAKE => futex_wake(uaddr.into(), flags, val),
+        FUTEX_WAKE_BITSET => futex_wake_bitset(uaddr.into(), flags, val, val3),
+        FUTEX_REQUEUE => futex_requeue(uaddr.into(), flags, val, uaddr2.into(), val2 as u32),
         FUTEX_CMP_REQUEUE => {
             error!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_CMP_REQUEUE");
             return Err(SyscallError::ENOSYS);
@@ -85,14 +75,17 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
             error!("[linux_syscall_api] futex: unsupported futex operation: FUTEX_WAKE_OP");
             return Err(SyscallError::ENOSYS);
         }
-        // TODO: priority-inheritance futex 
+        // TODO: priority-inheritance futex
         _ => {
-            error!("[linux_syscall_api] futex: unsupported futex operation: {}", cmd);
+            error!(
+                "[linux_syscall_api] futex: unsupported futex operation: {}",
+                cmd
+            );
             return Err(SyscallError::ENOSYS);
         }
     }
     // success anyway and reach here
-} 
+}
 
 /// 内核只发挥存储的作用
 /// 但要保证head对应的地址已经被分配
