@@ -1,6 +1,6 @@
 //! 相关系统调用的具体实现
 extern crate alloc;
-use super::socket::*;
+use super::{socket::*, socketpair::create_pair};
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 use alloc::sync::Arc;
@@ -66,6 +66,7 @@ pub fn syscall_bind(args: [usize; 6]) -> SyscallResult {
     let Some(socket) = file.as_any().downcast_ref::<Socket>() else {
         return Err(SyscallError::ENOTSOCK);
     };
+    // different action for AF_INET and AF_UNIX
     let addr = unsafe { socket_address_from(addr, socket) };
 
     info!("[bind()] binding socket {} to {:?}", fd, addr);
@@ -623,43 +624,46 @@ pub fn syscall_shutdown(args: [usize; 6]) -> SyscallResult {
     Ok(0)
 }
 
-pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
-    let fd: *mut u32 = args[3] as *mut u32;
-    let s_type = args[1];
+const AF_UNIX: usize = 1;
+const SOCK_STREAM: usize = 1;
+
+pub fn syscall_socketpair(
+    args: [usize; 6]
+) -> SyscallResult {
     let domain = args[0];
+    let _type = args[1];
+    let _protocol = args[2];
+    let fd = args[3] as *mut u32;
+
+    if domain != AF_UNIX {
+        return Err(SyscallError::EAFNOSUPPORT);
+    }
+    if _type != SOCK_STREAM {
+        return Err(SyscallError::EPROTOTYPE);
+    }
+
     let process = current_process();
     if process.manual_alloc_for_lazy((fd as usize).into()).is_err() {
         return Err(SyscallError::EINVAL);
     }
-    if domain != Domain::AF_UNIX as usize {
-        panic!();
-    }
-    if SocketType::try_from(s_type & SOCKET_TYPE_MASK).is_err() {
-        // return ErrorNo::EINVAL as isize;
-        return Err(SyscallError::EINVAL);
-    };
-
-    let (fd1, fd2) = make_socketpair(s_type);
+    let non_block = false;
+    let (sock1,sock2) = create_pair(non_block);
     let mut fd_table = process.fd_manager.fd_table.lock();
     let fd_num = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
     } else {
         return Err(SyscallError::EPERM);
     };
-    fd_table[fd_num] = Some(fd1);
-
+    fd_table[fd_num] = Some(sock1);
     let fd_num2 = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
     } else {
         return Err(SyscallError::EPERM);
     };
-    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
-    fd_table[fd_num2] = Some(fd2);
-
+    fd_table[fd_num2] = Some(sock2);
     unsafe {
         core::ptr::write(fd, fd_num as u32);
         core::ptr::write(fd.offset(1), fd_num2 as u32);
     }
-
     Ok(0)
 }
