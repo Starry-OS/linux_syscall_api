@@ -19,12 +19,19 @@ use crate::syscall_fs::ctype::epoll::{EpollCtl, EpollEvent, EpollFile};
 /// # Arguments
 /// * `flag` - usize
 pub fn syscall_epoll_create1(args: [usize; 6]) -> SyscallResult {
-    let _flag = args[0];
+    let flag = args[0];
     let file = EpollFile::new();
     let process = current_process();
     let mut fd_table = process.fd_manager.fd_table.lock();
     if let Ok(num) = process.alloc_fd(&mut fd_table) {
         fd_table[num] = Some(Arc::new(file));
+        // 这个条件判断检查`flag`是否包含`EPOLL_CLOEXEC`标志。
+        // 如果包含，则获取刚刚插入到文件描述符表中的`EpollFile`的引用，并调用方法设置`CLOEXEC`标志。
+        if flag & EPOLL_CLOEXEC != 0 {
+            if let Some(file) = fd_table[num].as_ref() {
+                file.set_close_on_exec(true);
+            }
+        }
         Ok(num as isize)
     } else {
         // ErrorNo::EMFILE as isize

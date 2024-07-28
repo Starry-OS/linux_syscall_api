@@ -6,7 +6,7 @@ use core::slice::{from_raw_parts, from_raw_parts_mut};
 use alloc::sync::Arc;
 use axfs::api::FileIO;
 
-use crate::{SyscallError, SyscallResult};
+use crate::{syscall_fs::ctype::pipe::make_socketpair, SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
 
@@ -625,39 +625,45 @@ pub fn syscall_shutdown(args: [usize; 6]) -> SyscallResult {
 
 pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     let fd: *mut u32 = args[3] as *mut u32;
-    let s_type = args[1];
     let domain = args[0];
+    let flags = args[1];
+    let _protocol = args[2];
+
     let process = current_process();
     if process.manual_alloc_for_lazy((fd as usize).into()).is_err() {
         return Err(SyscallError::EINVAL);
     }
+
     if domain != Domain::AF_UNIX as usize {
         panic!();
     }
-    if SocketType::try_from(s_type & SOCKET_TYPE_MASK).is_err() {
+    if SocketType::try_from(flags & SOCKET_TYPE_MASK).is_err() {
         // return ErrorNo::EINVAL as isize;
         return Err(SyscallError::EINVAL);
     };
 
-    let (fd1, fd2) = make_socketpair(s_type);
+    let (fd1, fd2) = make_socketpair(domain, _protocol, flags);
     let mut fd_table = process.fd_manager.fd_table.lock();
-    let fd_num = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
+    let fd_num1 = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
     } else {
         return Err(SyscallError::EPERM);
     };
-    fd_table[fd_num] = Some(fd1);
+
+    fd_table[fd_num1] = Some(fd1);
 
     let fd_num2 = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
         fd
     } else {
         return Err(SyscallError::EPERM);
     };
-    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
+
     fd_table[fd_num2] = Some(fd2);
 
+    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num1, fd_num2);
+
     unsafe {
-        core::ptr::write(fd, fd_num as u32);
+        core::ptr::write(fd, fd_num1 as u32);
         core::ptr::write(fd.offset(1), fd_num2 as u32);
     }
 

@@ -7,6 +7,11 @@ use axlog::{info, trace};
 use axsync::Mutex;
 use axtask::yield_now;
 
+/// Set O_NONBLOCK flag on the open fd
+pub const SOCK_NONBLOCK: usize = 0x800;
+/// Set FD_CLOEXEC flag on the new fd
+pub const SOCK_CLOEXEC: usize = 0x80000;
+
 /// IPC pipe
 pub struct Pipe {
     #[allow(unused)]
@@ -265,5 +270,191 @@ impl FileIO for Pipe {
             *self.flags.lock() &= !OpenFlags::CLOEXEC;
         }
         true
+    }
+}
+
+pub struct SocketPair {
+    _domain: usize,
+    _protocol: usize,
+    flags: Mutex<OpenFlags>,
+    buffer: Arc<Mutex<SocketPairBuffer>>,
+}
+
+impl SocketPair {
+    pub fn new(_domain: usize, _protocol: usize, flags: OpenFlags) -> Self {
+        let buffer = Arc::new(Mutex::new(SocketPairBuffer::new()));
+        Self {
+            _domain,
+            _protocol,
+            flags: Mutex::new(flags),
+            buffer,
+        }
+    }
+}
+
+impl FileIO for SocketPair {
+    fn read(&self, buf: &mut [u8]) -> AxResult<usize> {
+        let want_to_read = buf.len();
+        let mut buf_iter = buf.iter_mut();
+        let mut already_read = 0usize;
+        loop {
+            let mut ring_buffer = self.buffer.lock();
+            let loop_read = ring_buffer.available_read();
+            if loop_read == 0 {
+                if Arc::strong_count(&self.buffer) < 2 {
+                    return Ok(already_read);
+                }
+                drop(ring_buffer);
+                yield_now();
+                continue;
+            }
+            for _ in 0..loop_read {
+                if let Some(byte_ref) = buf_iter.next() {
+                    *byte_ref = ring_buffer.read_byte();
+                    already_read += 1;
+                    if already_read == want_to_read {
+                        return Ok(want_to_read);
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            return Ok(already_read);
+        }
+    }
+
+    fn write(&self, buf: &[u8]) -> AxResult<usize> {
+        let want_to_write = buf.len();
+        let mut buf_iter = buf.iter();
+        let mut already_write = 0usize;
+        loop {
+            let mut ring_buffer = self.buffer.lock();
+            let loop_write = ring_buffer.available_write();
+            if loop_write == 0 {
+                drop(ring_buffer);
+
+                if Arc::strong_count(&self.buffer) < 2 {
+                    // 读入端关闭
+                    return Ok(already_write);
+                }
+                yield_now();
+                continue;
+            }
+
+            // write at most loop_write bytes
+            for _ in 0..loop_write {
+                if let Some(byte_ref) = buf_iter.next() {
+                    ring_buffer.write_byte(*byte_ref);
+                    already_write += 1;
+                    if already_write == want_to_write {
+                        drop(ring_buffer);
+                        return Ok(want_to_write);
+                    }
+                } else {
+                    break;
+                }
+            }
+            return Ok(already_write);
+        }
+    }
+
+    fn readable(&self) -> bool {
+        true
+    }
+
+    fn writable(&self) -> bool {
+        true
+    }
+
+    fn executable(&self) -> bool {
+        false
+    }
+
+    fn get_type(&self) -> axfs::api::FileIOType {
+        axfs::api::FileIOType::Socket
+    }
+
+    fn get_status(&self) -> OpenFlags {
+        *self.flags.lock()
+    }
+
+    fn set_close_on_exec(&self, is_set: bool) -> bool {
+        if is_set {
+            // 设置close_on_exec位置
+            *self.flags.lock() |= OpenFlags::CLOEXEC;
+        } else {
+            *self.flags.lock() &= !OpenFlags::CLOEXEC;
+        }
+        true
+    }
+}
+
+/// return sockerpair read write
+pub fn make_socketpair(domain: usize, _protocol: usize, flags: usize) 
+  -> (Arc<SocketPair>, Arc<SocketPair>) {
+    let flags = OpenFlags::from_bits_truncate(flags as u32);
+    let sp1 = Arc::new(SocketPair::new(domain, _protocol, flags));
+    let sp2 = Arc::new(SocketPair::new(domain, _protocol, flags));
+    sp1.buffer.lock().head = sp2.buffer.lock().tail;
+    sp2.buffer.lock().head = sp1.buffer.lock().tail;
+    (sp1, sp2)
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum SocketPairBufferStatus {
+    Full,
+    Empty,
+    Normal,
+}
+pub struct SocketPairBuffer {
+    arr: [u8; RING_BUFFER_SIZE],
+    head: usize,
+    tail: usize,
+    status: SocketPairBufferStatus,
+}
+
+impl SocketPairBuffer {
+    pub fn new() -> Self {
+        Self {
+            arr: [0; RING_BUFFER_SIZE],
+            head: 0,
+            tail: 0,
+            status: SocketPairBufferStatus::Empty,
+        }
+    }
+
+    pub fn write_byte(&mut self, byte: u8) {
+        self.status = SocketPairBufferStatus::Normal;
+        self.arr[self.tail] = byte;
+        self.tail = (self.tail + 1) % RING_BUFFER_SIZE;
+        if self.tail == self.head {
+            self.status = SocketPairBufferStatus::Full;
+        }
+    }
+    pub fn read_byte(&mut self) -> u8 {
+        self.status = SocketPairBufferStatus::Normal;
+        let c = self.arr[self.head];
+        self.head = (self.head + 1) % RING_BUFFER_SIZE;
+        if self.head == self.tail {
+            self.status = SocketPairBufferStatus::Empty;
+        }
+        c
+    }
+    pub fn available_read(&self) -> usize {
+        if self.status == SocketPairBufferStatus::Empty {
+            0
+        } else if self.tail > self.head {
+            self.tail - self.head
+        } else {
+            self.tail + RING_BUFFER_SIZE - self.head
+        }
+    }
+    pub fn available_write(&self) -> usize {
+        if self.status == SocketPairBufferStatus::Full {
+            0
+        } else {
+            RING_BUFFER_SIZE - self.available_read()
+        }
     }
 }
