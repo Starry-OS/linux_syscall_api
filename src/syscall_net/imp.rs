@@ -1,12 +1,12 @@
 //! 相关系统调用的具体实现
 extern crate alloc;
-use super::{socket::*, socketpair::create_pair};
+use super::socket::*;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 use alloc::sync::Arc;
-use axfs::api::FileIO;
+use axfs::api::{FileIO, OpenFlags};
 
-use crate::{SyscallError, SyscallResult};
+use crate::{syscall_fs::ctype::pipe::make_pipe, SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
 
@@ -624,6 +624,72 @@ pub fn syscall_shutdown(args: [usize; 6]) -> SyscallResult {
     Ok(0)
 }
 
+pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
+    let fd: *mut u32 = args[3] as *mut u32;
+    let s_type = args[1];
+    let domain = args[0];
+    let process = current_process();
+    if process.manual_alloc_for_lazy((fd as usize).into()).is_err() {
+        return Err(SyscallError::EINVAL);
+    }
+    if domain != Domain::AF_UNIX as usize {
+        panic!();
+    }
+    if SocketType::try_from(s_type & SOCKET_TYPE_MASK).is_err() {
+        // return ErrorNo::EINVAL as isize;
+        return Err(SyscallError::EINVAL);
+    };
+
+    let (fd1, fd2) = make_socketpair(s_type);
+    let mut fd_table = process.fd_manager.fd_table.lock();
+    let fd_num = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
+        fd
+    } else {
+        return Err(SyscallError::EPERM);
+    };
+    fd_table[fd_num] = Some(fd1);
+
+    let fd_num2 = if let Ok(fd) = process.alloc_fd(&mut fd_table) {
+        fd
+    } else {
+        return Err(SyscallError::EPERM);
+    };
+    axlog::info!("alloc fd1 {} fd2 {} as socketpair", fd_num, fd_num2);
+    fd_table[fd_num2] = Some(fd2);
+
+    unsafe {
+        core::ptr::write(fd, fd_num as u32);
+        core::ptr::write(fd.offset(1), fd_num2 as u32);
+    }
+
+    Ok(0)
+}
+
+
+/// return sockerpair read write
+pub fn make_socketpair(socket_type: usize) -> (Arc<Socket>, Arc<Socket>) {
+    let s_type = SocketType::try_from(socket_type & SOCKET_TYPE_MASK).unwrap();
+    let mut fd1 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut fd2 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut pipe_flag = OpenFlags::empty();
+    if socket_type & SOCK_NONBLOCK != 0 {
+        pipe_flag |= OpenFlags::NON_BLOCK;
+        fd1.set_nonblocking(true);
+        fd2.set_nonblocking(true);
+    }
+    if socket_type & SOCK_CLOEXEC != 0 {
+        pipe_flag |= OpenFlags::CLOEXEC;
+        fd1.set_close_on_exec(true);
+        fd2.set_close_on_exec(true);
+    }
+    let (pipe1, pipe2) = make_pipe(pipe_flag);
+    fd1.buffer = Some(pipe1);
+    fd2.buffer = Some(pipe2);
+    (Arc::new(fd1), Arc::new(fd2))
+}
+
+
+/* 
 const AF_UNIX: usize = 1;
 const SOCK_STREAM: usize = 1;
 
@@ -667,3 +733,4 @@ pub fn syscall_socketpair(
     }
     Ok(0)
 }
+*/

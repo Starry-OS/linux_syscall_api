@@ -1,3 +1,4 @@
+#![allow(unused)]
 use axfs::api::{FileIO, FileIOType};
 extern crate alloc;
 use alloc::sync::{Arc, Weak};
