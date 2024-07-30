@@ -36,9 +36,10 @@ pub fn syscall_getcwd(args: [usize; 6]) -> SyscallResult {
     let buf = args[0] as *mut u8;
     let len = args[1];
     debug!("Into syscall_getcwd. buf: {}, len: {}", buf as usize, len);
-    let mut cwd = axfs::api::current_dir().unwrap();
+    let mut cwd = current_process().get_cwd();
+
     cwd.push('\0');
-    info!("current dir: {:?}", cwd);
+    info!("[syscall_getcwd]current dir: {:?}", cwd);
     // todo: 如果buf为NULL,则系统分配缓存区
     // let process = current_process();
     // let process_inner = process.inner.lock();
