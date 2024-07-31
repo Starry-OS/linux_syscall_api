@@ -4,9 +4,9 @@ use super::socket::*;
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 
 use alloc::sync::Arc;
-use axfs::api::FileIO;
+use axfs::api::{FileIO, OpenFlags};
 
-use crate::{SyscallError, SyscallResult};
+use crate::{syscall_fs::ctype::pipe::make_pipe, SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
 
@@ -66,6 +66,7 @@ pub fn syscall_bind(args: [usize; 6]) -> SyscallResult {
     let Some(socket) = file.as_any().downcast_ref::<Socket>() else {
         return Err(SyscallError::ENOTSOCK);
     };
+    // different action for AF_INET and AF_UNIX
     let addr = unsafe { socket_address_from(addr, socket) };
 
     info!("[bind()] binding socket {} to {:?}", fd, addr);
@@ -662,4 +663,27 @@ pub fn syscall_socketpair(args: [usize; 6]) -> SyscallResult {
     }
 
     Ok(0)
+}
+
+
+/// return sockerpair read write
+pub fn make_socketpair(socket_type: usize) -> (Arc<Socket>, Arc<Socket>) {
+    let s_type = SocketType::try_from(socket_type & SOCKET_TYPE_MASK).unwrap();
+    let mut fd1 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut fd2 = Socket::new(Domain::AF_UNIX, s_type);
+    let mut pipe_flag = OpenFlags::empty();
+    if socket_type & SOCK_NONBLOCK != 0 {
+        pipe_flag |= OpenFlags::NON_BLOCK;
+        fd1.set_nonblocking(true);
+        fd2.set_nonblocking(true);
+    }
+    if socket_type & SOCK_CLOEXEC != 0 {
+        pipe_flag |= OpenFlags::CLOEXEC;
+        fd1.set_close_on_exec(true);
+        fd2.set_close_on_exec(true);
+    }
+    let (pipe1, pipe2) = make_pipe(pipe_flag);
+    fd1.buffer = Some(pipe1);
+    fd2.buffer = Some(pipe2);
+    (Arc::new(fd1), Arc::new(fd2))
 }

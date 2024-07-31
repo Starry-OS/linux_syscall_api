@@ -11,7 +11,7 @@ use alloc::string::String;
 use axerrno::{AxError, AxResult};
 use axfs::api::{FileIO, FileIOType, OpenFlags, Read, Write};
 
-use axlog::warn;
+use axlog::{error, warn};
 use axnet::{
     add_membership, from_core_sockaddr, into_core_sockaddr, poll_interfaces, IpAddr, SocketAddr,
     TcpSocket, UdpSocket,
@@ -521,7 +521,10 @@ impl Socket {
                 SocketInner::Tcp(TcpSocket::new())
             }
             SocketType::SOCK_DGRAM => SocketInner::Udp(UdpSocket::new()),
-            _ => unimplemented!(),
+            _ => {
+                error!("unimplemented SocketType: {:?}", socket_type);
+                unimplemented!();
+            }
         };
         Self {
             domain,
@@ -837,28 +840,6 @@ impl FileIO for Socket {
             .store(_is_set, core::sync::atomic::Ordering::Release);
         true
     }
-}
-
-/// return sockerpair read write
-pub fn make_socketpair(socket_type: usize) -> (Arc<Socket>, Arc<Socket>) {
-    let s_type = SocketType::try_from(socket_type & SOCKET_TYPE_MASK).unwrap();
-    let mut fd1 = Socket::new(Domain::AF_UNIX, s_type);
-    let mut fd2 = Socket::new(Domain::AF_UNIX, s_type);
-    let mut pipe_flag = OpenFlags::empty();
-    if socket_type & SOCK_NONBLOCK != 0 {
-        pipe_flag |= OpenFlags::NON_BLOCK;
-        fd1.set_nonblocking(true);
-        fd2.set_nonblocking(true);
-    }
-    if socket_type & SOCK_CLOEXEC != 0 {
-        pipe_flag |= OpenFlags::CLOEXEC;
-        fd1.set_close_on_exec(true);
-        fd2.set_close_on_exec(true);
-    }
-    let (pipe1, pipe2) = make_pipe(pipe_flag);
-    fd1.buffer = Some(pipe1);
-    fd2.buffer = Some(pipe2);
-    (Arc::new(fd1), Arc::new(fd2))
 }
 
 /// Turn a socket address buffer into a SocketAddr
