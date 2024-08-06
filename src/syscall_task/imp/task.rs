@@ -7,6 +7,7 @@ use axprocess::{
 };
 use axsync::Mutex;
 use core::time::Duration;
+use core::sync::atomic::AtomicI32;
 // use axtask::{
 //     monolithic_task::task::{SchedPolicy, SchedStatus},
 //     AxTaskRef,
@@ -526,6 +527,8 @@ pub fn syscall_setsid() -> SyscallResult {
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
         process.fd_manager.fd_table.lock().clone(),
+        Arc::new(Mutex::new(String::from("./").into())),
+        Arc::new(AtomicI32::new(0o022)),
     );
 
     new_process
