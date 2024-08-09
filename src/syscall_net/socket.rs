@@ -470,7 +470,7 @@ impl Socket {
     }
     fn get_reuse_addr(&self) -> bool {
         match &self.inner {
-            SocketInner::Tcp(s) => unimplemented!("get_reuse_addr on other socket"),
+            SocketInner::Tcp(s) => s.is_reuse_addr(),
             SocketInner::Udp(s) => s.is_reuse_addr(),
         }
     }
@@ -495,7 +495,7 @@ impl Socket {
 
     fn set_reuse_addr(&self, flag: bool) {
         match &self.inner {
-            SocketInner::Tcp(s) => (),
+            SocketInner::Tcp(s) => s.set_reuse_addr(flag),
             SocketInner::Udp(s) => s.set_reuse_addr(flag),
         }
     }
