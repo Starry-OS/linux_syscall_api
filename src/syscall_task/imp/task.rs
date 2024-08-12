@@ -527,7 +527,7 @@ pub fn syscall_setsid() -> SyscallResult {
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
         process.fd_manager.fd_table.lock().clone(),
-        Arc::new(Mutex::new(String::from("./").into())),
+        Arc::new(Mutex::new(String::from("/").into())),
         Arc::new(AtomicI32::new(0o022)),
     );
 
