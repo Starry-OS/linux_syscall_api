@@ -8,7 +8,7 @@ use core::ptr::{self, copy_nonoverlapping};
 
 use crate::{
     syscall_fs::{
-        ctype::{file::new_fd, pidfd::PidFd, FileDesc},
+        ctype::{file::new_fd, pidfd::new_pidfd, FileDesc},
         solve_path,
     },
     DirEnt, DirEntType, Fcntl64Cmd, RenameFlags, SyscallError, SyscallResult, TimeSecs,
@@ -17,11 +17,10 @@ use axhal::mem::VirtAddr;
 use axprocess::{
     current_process,
     link::{FilePath, AT_FDCWD},
-    PID2PC,
 };
 
 extern crate alloc;
-use alloc::{string::ToString, sync::Arc};
+use alloc::string::ToString;
 
 /// 功能:获取当前工作目录；
 /// # Arguments
@@ -667,21 +666,8 @@ pub fn syscall_utimensat(args: [usize; 6]) -> SyscallResult {
 pub fn syscall_pidfd_open(args: [usize; 6]) -> SyscallResult {
     let pid = args[0] as u32;
     let flags = args[1] as u32;
-    let mut open_flags = OpenFlags::from_bits(flags).ok_or(SyscallError::EINVAL)?;
-    // It is set to close the file descriptor on exec
-    open_flags |= OpenFlags::CLOEXEC;
-    let pid2fd = PID2PC.lock();
-
-    let pidfd = pid2fd
-        .get(&(pid as u64))
-        .map(|target_process| PidFd::new(Arc::clone(target_process), open_flags))
-        .ok_or(SyscallError::EINVAL)?;
-    drop(pid2fd);
-    let process = current_process();
-    let mut fd_table = process.fd_manager.fd_table.lock();
-    let fd = process
-        .alloc_fd(&mut fd_table)
-        .map_err(|_| SyscallError::EMFILE)?;
-    fd_table[fd] = Some(Arc::new(pidfd));
-    Ok(fd as isize)
+    new_pidfd(
+        pid as u64,
+        OpenFlags::from_bits(flags).ok_or(SyscallError::EINVAL)?,
+    )
 }

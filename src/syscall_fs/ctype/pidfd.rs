@@ -1,8 +1,10 @@
 extern crate alloc;
 use alloc::sync::Arc;
 use axfs::api::{FileIO, OpenFlags};
-use axprocess::Process;
+use axprocess::{current_process, Process, PID2PC};
 use axsync::Mutex;
+
+use crate::{SyscallError, SyscallResult};
 
 pub struct PidFd {
     flags: Mutex<OpenFlags>,
@@ -16,6 +18,10 @@ impl PidFd {
             flags: Mutex::new(flags),
             process,
         }
+    }
+
+    pub fn pid(&self) -> u64 {
+        self.process.pid()
     }
 }
 
@@ -64,4 +70,23 @@ impl FileIO for PidFd {
         }
         true
     }
+}
+
+pub fn new_pidfd(pid: u64, mut flags: OpenFlags) -> SyscallResult {
+    // It is set to close the file descriptor on exec
+    flags |= OpenFlags::CLOEXEC;
+    let pid2fd = PID2PC.lock();
+
+    let pidfd = pid2fd
+        .get(&pid)
+        .map(|target_process| PidFd::new(Arc::clone(target_process), flags))
+        .ok_or(SyscallError::EINVAL)?;
+    drop(pid2fd);
+    let process = current_process();
+    let mut fd_table = process.fd_manager.fd_table.lock();
+    let fd = process
+        .alloc_fd(&mut fd_table)
+        .map_err(|_| SyscallError::EMFILE)?;
+    fd_table[fd] = Some(Arc::new(pidfd));
+    Ok(fd as isize)
 }

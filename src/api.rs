@@ -2,6 +2,7 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use axerrno::AxResult;
 use axhal::{
     arch::{flush_tlb, write_page_table_root},
     KERNEL_PROCESS_ID,
@@ -35,7 +36,9 @@ pub fn recycle_user_process() {
             // kill the process
             let args: [usize; 6] = [pid as usize, 9, 0, 0, 0, 0];
             let _ = syscall_kill(args);
-            yield_now_task();
+            while !children.get_zombie() {
+                yield_now_task();
+            }
         }
     }
 
@@ -98,15 +101,15 @@ fn get_args(command_line: &[u8]) -> Vec<String> {
 }
 
 /// To run a testcase with the given name and environment variables, which will be used in initproc
-pub fn run_testcase(testcase: &str, envs: Vec<String>) {
-    // axlog::ax_println!("Running testcase: {}", testcase);
+pub fn run_testcase(testcase: &str, envs: Vec<String>) -> AxResult<()> {
+    axlog::ax_println!("Running testcase: {}", testcase);
     let args = get_args(testcase.as_bytes());
     let mut args_vec: Vec<String> = Vec::new();
     for arg in args {
         args_vec.push(arg.to_string());
     }
 
-    let user_process = Process::init(args_vec, &envs).unwrap();
+    let user_process = Process::init(args_vec, &envs)?;
     let now_process_id = user_process.get_process_id() as i32;
     let mut exit_code = 0;
     loop {
@@ -116,9 +119,15 @@ pub fn run_testcase(testcase: &str, envs: Vec<String>) {
         yield_now_task();
     }
     recycle_user_process();
+    // unsafe {
+    //     write_page_table_root(KERNEL_PAGE_TABLE.root_paddr());
+    //     flush_tlb(None);
+    // };
     // axlog::ax_println!(
     //     "Testcase {} finished with exit code {}",
     //     testcase,
     //     exit_code
     // );
+
+    Ok(())
 }

@@ -2,7 +2,7 @@
 //!
 
 use crate::{get_fs_stat, syscall_fs::solve_path, FsStat, FsStatx, SyscallError, SyscallResult};
-use axfs::api::{FileIOType, Kstat};
+use axfs::api::Kstat;
 use axlog::{debug, info};
 use axprocess::{
     current_process,
@@ -30,10 +30,6 @@ pub fn syscall_fstat(args: [usize; 6]) -> SyscallResult {
         return Err(SyscallError::EPERM);
     }
     let file = fd_table[fd].clone().unwrap();
-    if file.get_type() != FileIOType::FileDesc {
-        debug!("fd {} is not a file", fd);
-        return Err(SyscallError::EPERM);
-    }
 
     match file.get_stat() {
         Ok(stat) => {

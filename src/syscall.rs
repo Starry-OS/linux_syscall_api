@@ -3,8 +3,6 @@ use axlog::info;
 
 #[no_mangle]
 pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
-    // axlog::error!("😄 syscall id {syscall_id}, args: {args:?}");
-
     #[allow(unused_mut, unused_assignments)]
     let mut ans: Option<SyscallResult> = None;
 
@@ -28,19 +26,25 @@ pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
     }
 
     if let Ok(fs_syscall_id) = crate::syscall_fs::FsSyscallId::try_from(syscall_id) {
-        info!(
-            "[syscall] id = {:#?}, args = {:?}, entry",
-            fs_syscall_id, args
-        );
+        if syscall_id != 281 {
+            info!(
+                "[syscall] id = {:#?}, args = {:?}, entry",
+                fs_syscall_id, args
+            );
+        }
+
         (#[allow(unused_assignments)]
         ans) = Some(crate::syscall_fs::fs_syscall(fs_syscall_id, args));
     }
 
     if let Ok(task_syscall_id) = crate::syscall_task::TaskSyscallId::try_from(syscall_id) {
-        info!(
-            "[syscall] id = {:#?}, args = {:?}, entry",
-            task_syscall_id, args
-        );
+        if syscall_id != 228 {
+            info!(
+                "[syscall] id = {:#?}, args = {:?}, entry",
+                task_syscall_id, args
+            );
+        }
+
         (#[allow(unused_assignments)]
         ans) = Some(crate::syscall_task::task_syscall(task_syscall_id, args));
     }
@@ -49,7 +53,7 @@ pub fn syscall(syscall_id: usize, args: [usize; 6]) -> isize {
         panic!("unknown syscall id: {}", syscall_id);
     }
     let ans = deal_result(ans.unwrap());
-    if syscall_id != 96 && syscall_id != 98 {
+    if syscall_id != 281 && syscall_id != 228 {
         info!("[syscall] id = {},return {}", syscall_id, ans);
     }
     ans

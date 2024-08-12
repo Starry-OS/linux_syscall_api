@@ -67,23 +67,20 @@ pub fn syscall_unlinkat(args: [usize; 6]) -> SyscallResult {
         return Ok(-1);
     }
 
-    // unlink file
-    if flags == 0 {
-        if remove_link(&path).is_none() {
-            debug!("unlink file error");
-            return Err(SyscallError::EINVAL);
-        }
-    }
     // remove dir
-    else if flags == AT_REMOVEDIR {
+    if flags == AT_REMOVEDIR {
         if let Err(e) = axfs::api::remove_dir(path.path()) {
             debug!("rmdir error: {:?}", e);
             return Err(SyscallError::EINVAL);
         }
+        return Ok(0);
     }
-    // flags error
-    else {
-        debug!("flags error");
+    let metadata = axfs::api::metadata(path.path()).unwrap();
+    if metadata.is_dir() {
+        return Err(SyscallError::EISDIR);
+    }
+    if remove_link(&path).is_none() {
+        debug!("unlink file error");
         return Err(SyscallError::EINVAL);
     }
     Ok(0)

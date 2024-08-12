@@ -185,7 +185,7 @@ pub fn syscall_kill(args: [usize; 6]) -> SyscallResult {
     let signum = args[1] as isize;
     if pid > 0 && signum > 0 {
         // 不关心是否成功
-        let _ = axprocess::signal::send_signal_to_process(pid, signum);
+        let _ = axprocess::signal::send_signal_to_process(pid, signum, None);
         Ok(0)
     } else if pid == 0 {
         Err(SyscallError::ESRCH)

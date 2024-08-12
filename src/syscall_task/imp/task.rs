@@ -1,20 +1,27 @@
+use axfs::api::OpenFlags;
 use axhal::time::current_time;
 use axprocess::{
     current_process, current_task, exit_current_task,
     flags::{CloneFlags, WaitStatus},
     link::{raw_ptr_to_ref_str, AT_FDCWD},
-    set_child_tid, sleep_now_task, wait_pid, yield_now_task, Process, PID2PC,
+    set_child_tid,
+    signal::send_signal_to_process,
+    sleep_now_task, wait_pid, yield_now_task, Process, PID2PC,
 };
 use axsync::Mutex;
-use core::time::Duration;
 use core::sync::atomic::AtomicI32;
+use core::time::Duration;
 // use axtask::{
 //     monolithic_task::task::{SchedPolicy, SchedStatus},
 //     AxTaskRef,
 // };
 use crate::{
-    syscall_fs::imp::solve_path, CloneArgs, RLimit, SyscallError, SyscallResult, TimeSecs,
-    WaitFlags, RLIMIT_AS, RLIMIT_NOFILE, RLIMIT_STACK,
+    syscall_fs::{
+        ctype::pidfd::{new_pidfd, PidFd},
+        imp::solve_path,
+    },
+    CloneArgs, RLimit, SyscallError, SyscallResult, TimeSecs, WaitFlags, RLIMIT_AS, RLIMIT_NOFILE,
+    RLIMIT_STACK,
 };
 use axlog::info;
 use axtask::TaskId;
@@ -26,7 +33,7 @@ use alloc::{
     vec::Vec,
 };
 
-use axsignal::signal_no::SignalNo;
+use axsignal::{info::SigInfo, signal_no::SignalNo};
 
 use axprocess::signal::SignalModule;
 // pub static TEST_FILTER: Mutex<BTreeMap<String, usize>> = Mutex::new(BTreeMap::new());
@@ -185,12 +192,18 @@ pub fn syscall_clone(args: [usize; 6]) -> SyscallResult {
         return Err(SyscallError::EINVAL);
     }
 
-    if clone_flags.contains(CloneFlags::CLONE_FS) {
-        axlog::warn!("Not support for clone_fs");
-    }
-
     if let Ok(new_task_id) = curr_process.clone_task(flags, stack, ptid, tls, ctid, sig_child) {
-        info!("[syscall_clone] parent_id: {:?}, child_id: {:?}", current_task().id(), new_task_id);
+        if clone_flags.contains(CloneFlags::CLONE_PIDFD) {
+            if clone_flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
+                return Err(SyscallError::EINVAL);
+            }
+            if curr_process.manual_alloc_for_lazy(ptid.into()).is_ok() {
+                unsafe {
+                    *(ptid as *mut i32) = new_pidfd(new_task_id, OpenFlags::empty())? as i32;
+                }
+            }
+        }
+
         Ok(new_task_id as isize)
     } else {
         Err(SyscallError::ENOMEM)
@@ -208,17 +221,14 @@ pub fn syscall_clone3(args: [usize; 6]) -> SyscallResult {
         return Err(SyscallError::EINVAL);
     }
     let curr_process = current_process();
-
-    let args = match curr_process
-        .manual_alloc_range_for_lazy(args[0].into(), (args[0] + size - 1).into())
-    {
-        Ok(_) => unsafe { &*(args[0] as *const CloneArgs) },
+    let clone_args = match curr_process.manual_alloc_type_for_lazy(args[0] as *const CloneArgs) {
+        Ok(_) => unsafe { &mut *(args[0] as *mut CloneArgs) },
         Err(_) => return Err(SyscallError::EFAULT),
     };
-    let clone_flags = CloneFlags::from_bits(args.flags as u32).unwrap();
+    let clone_flags = CloneFlags::from_bits(clone_args.flags as u32).unwrap();
     if (clone_flags.contains(CloneFlags::CLONE_THREAD)
         || clone_flags.contains(CloneFlags::CLONE_PARENT))
-        && args.exit_signal != 0
+        && clone_args.exit_signal != 0
     {
         // Error when CLONE_THREAD or CLONE_PARENT was specified in the flags mask, but a signal was specified in exit_signal.
         return Err(SyscallError::EINVAL);
@@ -230,33 +240,35 @@ pub fn syscall_clone3(args: [usize; 6]) -> SyscallResult {
         return Err(SyscallError::EINVAL);
     }
 
-    if clone_flags.contains(CloneFlags::CLONE_FS) {
-        axlog::warn!("Not support for clone_fs");
-    }
-
-    let stack = if args.stack == 0 {
+    let stack = if clone_args.stack == 0 {
         None
     } else {
-        Some((args.stack + args.stack_size) as usize)
+        Some((clone_args.stack + clone_args.stack_size) as usize)
     };
-    let sig_child = if args.exit_signal != 0 {
-        Some(SignalNo::from(args.exit_signal as usize))
+    let sig_child = if clone_args.exit_signal != 0 {
+        Some(SignalNo::from(clone_args.exit_signal as usize))
     } else {
         None
     };
 
-    if args.stack != 0 && (args.stack % 16 != 0 || args.stack_size == 0) {
+    if clone_args.stack != 0 && (clone_args.stack % 16 != 0 || clone_args.stack_size == 0) {
         return Err(SyscallError::EINVAL);
     }
 
     if let Ok(new_task_id) = curr_process.clone_task(
-        args.flags as usize,
+        clone_args.flags as usize,
         stack,
-        args.parent_tid as usize,
-        args.tls as usize,
-        args.child_tid as usize,
+        clone_args.parent_tid as usize,
+        clone_args.tls as usize,
+        clone_args.child_tid as usize,
         sig_child,
     ) {
+        if clone_flags.contains(CloneFlags::CLONE_PIDFD) {
+            unsafe {
+                *(clone_args.pidfd as *mut u64) =
+                    new_pidfd(new_task_id, OpenFlags::empty())? as u64;
+            }
+        }
         Ok(new_task_id as isize)
     } else {
         Err(SyscallError::ENOMEM)
@@ -526,9 +538,9 @@ pub fn syscall_setsid() -> SyscallResult {
         process.get_parent(),
         Mutex::new(process.memory_set.lock().clone()),
         process.get_heap_bottom(),
-        process.fd_manager.fd_table.lock().clone(),
         Arc::new(Mutex::new(String::from("/").into())),
         Arc::new(AtomicI32::new(0o022)),
+        Arc::new(Mutex::new(process.fd_manager.fd_table.lock().clone())),
     );
 
     new_process
@@ -646,4 +658,50 @@ pub fn syscall_prctl(args: [usize; 6]) -> SyscallResult {
         }
         _ => Ok(0),
     }
+}
+
+/// Sendthe signal sig to the target process referred to by pidfd
+pub fn syscall_pidfd_send_signal(args: [usize; 6]) -> SyscallResult {
+    let fd = args[0] as usize;
+    let signum = args[1] as i32;
+    axlog::warn!("Ignore the info arguments");
+
+    let curr_process = current_process();
+    let fd_table = curr_process.fd_manager.fd_table.lock();
+
+    let pidfd_file = match fd_table.get(fd) {
+        Some(Some(f)) => f.clone(),
+        _ => return Err(SyscallError::EBADF),
+    };
+
+    let pidfd = pidfd_file
+        .as_any()
+        .downcast_ref::<PidFd>()
+        .ok_or(SyscallError::EBADF)?;
+    let sig_info_ptr = args[2] as *const SigInfo;
+
+    let sig_info = if sig_info_ptr.is_null() {
+        SigInfo {
+            si_code: 0,
+            si_errno: 0,
+            si_signo: signum,
+            pid: curr_process.pid() as i32,
+            uid: 0,
+            ..Default::default()
+        }
+    } else {
+        if curr_process
+            .manual_alloc_type_for_lazy(sig_info_ptr)
+            .is_err()
+        {
+            return Err(SyscallError::EFAULT);
+        }
+        unsafe { *sig_info_ptr }
+    };
+
+    info!("Pid: {} Sig Info: {:?}", pidfd.pid(), sig_info.si_val_int);
+
+    send_signal_to_process(pidfd.pid() as isize, signum as isize, Some(sig_info))?;
+
+    Ok(0)
 }
