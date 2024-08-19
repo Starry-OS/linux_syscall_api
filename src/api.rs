@@ -7,13 +7,13 @@ use axhal::{
     arch::{flush_tlb, write_page_table_root},
     KERNEL_PROCESS_ID,
 };
-use axprocess::{wait_pid, yield_now_task, Process, PID2PC};
+use axprocess::{wait_pid, yield_now_task, Process, PID2PC, TID2TASK};
 use axruntime::KERNEL_PAGE_TABLE;
 use axtask::{Processor, TaskId};
 
 use axfs::api::OpenFlags;
 
-use crate::syscall_task::syscall_kill;
+use crate::syscall_task::{syscall_kill, syscall_tkill};
 
 /// 在完成一次系统调用之后，恢复全局目录
 pub fn init_current_dir() {
@@ -25,6 +25,20 @@ pub type FileFlags = OpenFlags;
 
 /// 释放所有非内核进程
 pub fn recycle_user_process() {
+    // FIXME: It doesn't wake up the task blocked.
+    let tid_set: Vec<u64> = TID2TASK.lock().keys().cloned().collect();
+    for tid in tid_set {
+        let task = Arc::clone(TID2TASK.lock().get(&tid).unwrap());
+        let pid = task.get_process_id();
+        if pid != KERNEL_PROCESS_ID {
+            // kill the process
+            let args: [usize; 6] = [tid as usize, 9, 0, 0, 0, 0];
+            let _ = syscall_tkill(args);
+
+            yield_now_task();
+        }
+    }
+
     let kernel_process = Arc::clone(PID2PC.lock().get(&KERNEL_PROCESS_ID).unwrap());
 
     let childrens_num = kernel_process.children.lock().len();
@@ -36,19 +50,15 @@ pub fn recycle_user_process() {
             // kill the process
             let args: [usize; 6] = [pid as usize, 9, 0, 0, 0, 0];
             let _ = syscall_kill(args);
-            while !children.get_zombie() {
-                yield_now_task();
-            }
+
+            yield_now_task();
         }
     }
 
-    let pid2pc = PID2PC.lock();
     kernel_process
         .children
         .lock()
-        .retain(|x| x.pid() == KERNEL_PROCESS_ID || pid2pc.contains_key(&x.pid()));
-
-    drop(pid2pc);
+        .retain(|x| x.pid() == KERNEL_PROCESS_ID || PID2PC.lock().contains_key(&x.pid()));
 
     TaskId::clear();
     unsafe {
