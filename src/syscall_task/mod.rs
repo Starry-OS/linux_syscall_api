@@ -69,6 +69,8 @@ pub fn task_syscall(syscall_id: task_syscall_id::TaskSyscallId, args: [usize; 6]
         SCHED_GETAFFINITY => syscall_sched_getaffinity(args),
         SCHED_SETSCHEDULER => syscall_sched_setscheduler(args),
         SCHED_GETSCHEDULER => syscall_sched_getscheduler(args),
+        SCHED_GET_PRORITY_MAX => syscall_sched_getscheduler_max(args),
+        SCHED_GET_PRORITY_MIN => syscall_sched_getscheduler_min(args),
         GET_MEMPOLICY => Ok(0),
         CLOCK_GETRES => syscall_clock_getres(args),
         CLOCK_NANOSLEEP => syscall_clock_nanosleep(args),
