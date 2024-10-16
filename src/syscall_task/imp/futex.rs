@@ -41,9 +41,9 @@ pub fn syscall_futex(args: [usize; 6]) -> SyscallResult {
             "shared futex is not supported, but it's ok for anonymous mmap to use private futex"
         );
     }
-    if (flags & FLAGS_CLOCKRT) != 0 {
-        panic!("FUTEX_CLOCK_REALTIME is not supported");
-    }
+    // if (flags & FLAGS_CLOCKRT) != 0 {
+    //     panic!("FUTEX_CLOCK_REALTIME is not supported");
+    // }
     match cmd {
         FUTEX_WAIT => {
             val3 = FUTEX_BITSET_MATCH_ANY;

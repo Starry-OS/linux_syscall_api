@@ -281,6 +281,19 @@ pub struct RobustList {
     pending: usize,
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct MessageHeader {
+    /// Pointer to the socket address structure.
+    pub name: *mut u8,
+    pub name_len: u32,
+    pub iovec: *mut IoVec,
+    pub iovec_len: i32,
+    pub control: *const u8,
+    pub control_len: u32,
+    pub flags: i32,
+}
+
 /// readv/writev使用的结构体
 #[repr(C)]
 pub struct IoVec {

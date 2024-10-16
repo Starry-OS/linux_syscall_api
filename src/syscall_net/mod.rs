@@ -23,6 +23,7 @@ pub fn net_syscall(syscall_id: net_syscall_id::NetSyscallId, args: [usize; 6]) -
         // GETPEERNAME => 0,
         SENDTO => syscall_sendto(args),
         RECVFROM => syscall_recvfrom(args),
+        SENDMSG => syscall_sendmsg(args),
         SETSOCKOPT => syscall_set_sock_opt(args),
         // SETSOCKOPT => 0,
         GETSOCKOPT => syscall_get_sock_opt(args),

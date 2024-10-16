@@ -48,6 +48,7 @@ numeric_enum_macro::numeric_enum! {
         SOCKETPAIR = 53,
         SENDTO = 44,
         RECVFROM = 45,
+        SENDMSG = 46,
         SETSOCKOPT = 54,
         GETSOCKOPT = 55,
         SHUTDOWN = 48,

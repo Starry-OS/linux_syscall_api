@@ -6,7 +6,7 @@ use core::slice::{from_raw_parts, from_raw_parts_mut};
 use alloc::sync::Arc;
 use axfs::api::{FileIO, OpenFlags};
 
-use crate::{syscall_fs::ctype::pipe::make_pipe, SyscallError, SyscallResult};
+use crate::{MessageHeader, syscall_fs::ctype::pipe::make_pipe, SyscallError, SyscallResult};
 use axerrno::AxError;
 use axlog::{debug, error, info, warn};
 
@@ -433,6 +433,55 @@ pub fn syscall_recvfrom(args: [usize; 6]) -> SyscallResult {
         Err(AxError::Timeout) | Err(AxError::WouldBlock) => Err(SyscallError::EAGAIN),
         Err(_) => Err(SyscallError::EPERM),
     }
+}
+
+pub fn syscall_sendmsg(args: [usize; 6]) -> SyscallResult {
+    let fd = args[0];
+    let msg = args[1] as *mut MessageHeader;
+    let _flags = args[2];
+    let curr = current_process();
+    let msg = unsafe { &*msg };
+
+    let file = match curr.fd_manager.fd_table.lock().get(fd) {
+        Some(Some(file)) => file.clone(),
+        _ => return Err(SyscallError::EBADF),
+    };
+
+    let Some(socket) = file.as_any().downcast_ref::<Socket>() else {
+        return Err(SyscallError::ENOTSOCK);
+    };
+
+    let msg_header = &*msg;
+    let iove = unsafe{&*msg_header.iovec};
+    let buf = iove.base;
+    let len = iove.len;
+    let Ok(buf) = curr
+        .manual_alloc_range_for_lazy(
+            (buf as usize).into(),
+            unsafe { buf.add(len as usize) as usize }.into(),
+        )
+        .map(|_| unsafe { from_raw_parts(buf, len as usize) })
+    else {
+        error!("[sendto()] buf address {buf:?} invalid");
+        return Err(SyscallError::EFAULT);
+    };
+
+    let Ok(addr) = socket.peer_name() else {
+        return Err(SyscallError::EPERM);
+    };
+
+    match socket.sendto(buf, Some(addr)) {
+        Ok(len) => Ok(len as isize),
+        Err(AxError::Interrupted) => Err(SyscallError::EINTR),
+        Err(AxError::Again) | Err(AxError::WouldBlock) => Err(SyscallError::EAGAIN),
+        Err(AxError::NotConnected) => Err(SyscallError::ENOTCONN),
+        Err(AxError::ConnectionReset) => Err(SyscallError::EPIPE),
+        Err(e) => {
+            error!("[sendmsg()] socket {fd} send error: {e:?}");
+            Err(SyscallError::EPERM)
+        }
+    }
+
 }
 
 /// NOTE: only support socket level options (SOL_SOCKET)
