@@ -35,6 +35,7 @@ pub enum FsSyscallId {
     FACCESSAT = 48,
     CHDIR = 49,
     FCHMODAT = 53,
+    FCHOWN = 54,
     OPENAT = 56,
     CLOSE = 57,
     PIPE2 = 59,
@@ -134,6 +135,7 @@ numeric_enum_macro::numeric_enum! {
         STATX = 332,
         CHOWN = 92,
         MKNOD = 259,
+        FCHOWN = 93,
         PIDFD_OPEN = 434,
     }
 }

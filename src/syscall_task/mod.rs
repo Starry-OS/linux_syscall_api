@@ -75,6 +75,7 @@ pub fn task_syscall(syscall_id: task_syscall_id::TaskSyscallId, args: [usize; 6]
         CLOCK_GETRES => syscall_clock_getres(args),
         CLOCK_NANOSLEEP => syscall_clock_nanosleep(args),
         PRCTL => syscall_prctl(args),
+        PIDFD_SEND_SIGNAL => syscall_pidfd_send_signal(args),
         // syscall below just for x86_64
         #[cfg(target_arch = "x86_64")]
         VFORK => syscall_vfork(),

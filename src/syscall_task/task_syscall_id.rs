@@ -66,6 +66,7 @@ pub enum TaskSyscallId {
     SIGACTION = 134,
     SIGPROCMASK = 135,
     SIGRETURN = 139,
+    PIDFD_SEND_SIGNAL = 424,
 }
 }
 
@@ -138,5 +139,6 @@ numeric_enum_macro::numeric_enum! {
         VFORK = 58,
         ALARM = 37,
         SIGALTSTACK = 131,
+        PIDFD_SEND_SIGNAL = 424,
     }
 }
