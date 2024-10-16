@@ -92,6 +92,8 @@ numeric_enum_macro::numeric_enum! {
         SYSLOG = 103,
         SCHED_SETSCHEDULER = 144,
         SCHED_GETSCHEDULER = 145,
+        SCHED_GET_PRORITY_MAX = 146,
+        SCHED_GET_PRORITY_MIN = 147,
         SCHED_SETAFFINITY = 203,
         SCHED_GETAFFINITY = 204,
         GET_MEMPOLICY = 239,
