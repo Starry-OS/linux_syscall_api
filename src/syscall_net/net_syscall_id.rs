@@ -53,5 +53,6 @@ numeric_enum_macro::numeric_enum! {
         GETSOCKOPT = 55,
         SHUTDOWN = 48,
         ACCEPT4 = 288,
+        SENDMMSG = 307,
     }
 }
