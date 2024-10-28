@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use axconfig::SMP;
 use axhal::mem::VirtAddr;
 use axprocess::{current_process, current_task, PID2PC, TID2TASK};
-use axtask::{SchedPolicy, SchedStatus};
+use axtask::{SchedPolicy, SchedStatus, MAX_RT_PRIO};
 
 use crate::{SchedParam, SyscallError, SyscallResult};
 /// 获取对应任务的CPU适配集
@@ -222,4 +222,26 @@ pub fn syscall_sched_getscheduler(args: [usize; 6]) -> SyscallResult {
 
     let policy: isize = task.get_sched_status().policy.into();
     Ok(policy)
+}
+
+/// # Arguments
+/// * `policy` - usize
+pub fn syscall_sched_getscheduler_max(args: [usize; 6]) -> SyscallResult {
+    let policy: usize = args[0];
+    match SchedPolicy::from(policy) {
+        SchedPolicy::SCHED_FIFO | SchedPolicy::SCHED_RR => Ok(MAX_RT_PRIO as isize),
+        SchedPolicy::SCHED_OTHER | SchedPolicy::SCHED_DEADLINE |  SchedPolicy::SCHED_BATCH | SchedPolicy::SCHED_IDLE => Ok(0),
+        _ => Err(SyscallError::EINVAL),
+    }
+}
+
+/// # Arguments
+/// * `policy` - usize
+pub fn syscall_sched_getscheduler_min(args: [usize; 6]) -> SyscallResult {
+    let policy: usize = args[0];
+    match SchedPolicy::from(policy) {
+        SchedPolicy::SCHED_FIFO | SchedPolicy::SCHED_RR => Ok(1),
+        SchedPolicy::SCHED_OTHER | SchedPolicy::SCHED_DEADLINE |  SchedPolicy::SCHED_BATCH | SchedPolicy::SCHED_IDLE => Ok(0),
+        _ => Err(SyscallError::EINVAL),
+    }
 }

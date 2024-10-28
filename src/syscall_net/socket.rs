@@ -33,6 +33,7 @@ pub enum Domain {
     AF_UNIX = 1,
     AF_INET = 2,
     //AF_INET6 = 10,
+    AF_NETLINK = 16,
 }
 
 #[derive(TryFromPrimitive, PartialEq, Eq, Copy, Clone, Debug)]
@@ -517,7 +518,8 @@ impl Socket {
     /// Create a new socket with the given domain and socket type.
     pub fn new(domain: Domain, socket_type: SocketType) -> Self {
         let inner = match socket_type {
-            SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET => {
+            //fake SOCK_RAW, should not be here
+            SocketType::SOCK_STREAM | SocketType::SOCK_SEQPACKET | SocketType::SOCK_RAW => {
                 SocketInner::Tcp(TcpSocket::new())
             }
             SocketType::SOCK_DGRAM => SocketInner::Udp(UdpSocket::new()),
@@ -657,9 +659,9 @@ impl Socket {
     #[allow(unused)]
     /// let the socket send data to the given address
     pub fn sendto(&self, buf: &[u8], addr: Option<SocketAddr>) -> AxResult<usize> {
-        if self.domain == Domain::AF_UNIX {
-            return self.buffer.as_ref().unwrap().write(buf);
-        }
+        // if self.domain == Domain::AF_UNIX {
+        //     return self.buffer.as_ref().unwrap().write(buf);
+        // }
         match &self.inner {
             SocketInner::Udp(s) => {
                 // udp socket not bound
@@ -789,9 +791,9 @@ impl FileIO for Socket {
     }
 
     fn writable(&self) -> bool {
-        if self.domain == Domain::AF_UNIX {
-            return self.buffer.as_ref().unwrap().writable();
-        }
+        // if self.domain == Domain::AF_UNIX {
+        //     return self.buffer.as_ref().unwrap().writable();
+        // }
         poll_interfaces();
         match &self.inner {
             SocketInner::Tcp(s) => s.poll().map_or(false, |p| p.writable),
@@ -848,8 +850,8 @@ impl FileIO for Socket {
 pub unsafe fn socket_address_from(addr: *const u8, socket: &Socket) -> SocketAddr {
     let addr = addr as *const u16;
     match socket.domain {
-        Domain::AF_UNIX => unimplemented!(),
-        Domain::AF_INET => {
+        // fake AF_UNIX and AF_NETLINK, use AF_INET temporarily
+        Domain::AF_INET | Domain::AF_UNIX | Domain::AF_NETLINK => {
             let port = u16::from_be(*addr.add(1));
             let a = (*(addr.add(2) as *const u32)).to_le_bytes();
 
@@ -857,7 +859,7 @@ pub unsafe fn socket_address_from(addr: *const u8, socket: &Socket) -> SocketAdd
             SocketAddr { addr, port }
         }
         // TODO: support ipv6
-        // Domain::AF_INET6 => {}
+        //Domain::AF_INET6 => todo!()
     }
 }
 /// Only support INET (ipv4)

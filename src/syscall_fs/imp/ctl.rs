@@ -388,7 +388,7 @@ pub fn syscall_fcntl64(args: [usize; 6]) -> SyscallResult {
             if file.set_close_on_exec((arg & 1) != 0) {
                 Ok(0)
             } else {
-                error!("file.set_close_on_exec");
+                //error!("file.set_close_on_exec");
                 Err(SyscallError::EINVAL)
             }
         }
@@ -413,7 +413,7 @@ pub fn syscall_fcntl64(args: [usize; 6]) -> SyscallResult {
                 fd_table[new_fd] = fd_table[fd].clone();
                 Ok(new_fd as isize)
             } else {
-                error!("file.F_DUPFD_CLOEXEC");
+                //error!("file.F_DUPFD_CLOEXEC");
                 Err(SyscallError::EINVAL)
             }
         }
