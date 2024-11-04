@@ -26,6 +26,7 @@ pub enum NetSyscallId {
     SETSOCKOPT = 208,
     GETSOCKOPT = 209,
     SHUTDOWN = 210,
+    SENDMSG = 211,
     ACCEPT4 = 242,
 }
 }
