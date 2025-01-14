@@ -66,6 +66,7 @@ pub enum TaskSyscallId {
     SIGACTION = 134,
     SIGPROCMASK = 135,
     SIGRETURN = 139,
+    RESQ = 293,
     PIDFD_SEND_SIGNAL = 424,
 }
 }

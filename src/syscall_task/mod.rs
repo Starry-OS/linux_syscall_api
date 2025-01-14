@@ -66,6 +66,7 @@ pub fn task_syscall(syscall_id: task_syscall_id::TaskSyscallId, args: [usize; 6]
         SYSLOG => Ok(0),
         MADVICE => Ok(0),
         SCHED_SETAFFINITY => Ok(0),
+        RESQ   => Ok(0),
         SCHED_GETAFFINITY => syscall_sched_getaffinity(args),
         SCHED_SETSCHEDULER => syscall_sched_setscheduler(args),
         SCHED_GETSCHEDULER => syscall_sched_getscheduler(args),
